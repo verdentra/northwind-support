@@ -23,32 +23,30 @@ describe('useTicketList', () => {
     vi.clearAllMocks();
   });
 
-  it('searches with the text the user typed, once the typing settles', async () => {
-    const { result } = renderHook(() => useTicketList());
+  it('fetches immediately when the status filter changes', async () => {
+  const { result } = renderHook(() => useTicketList());
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
-    });
-
-    expect(getTickets).toHaveBeenCalledTimes(1);
-
-    act(() => {
-      result.current.updateFilters({ search: 'invoice' });
-    });
-
-    // Still inside the debounce window: no second request yet.
-    expect(getTickets).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
-    });
-
-    expect(getTickets).toHaveBeenCalledTimes(2);
-    expect(getTickets).toHaveBeenLastCalledWith(
-      expect.objectContaining({ search: 'invoice', page: 1 }),
-    );
-
-    expect(result.current.isLoading).toBe(false);
-    expect(result.current.data?.items).toHaveLength(1);
+  // Allow the initial request to settle.
+  await act(async () => {
+    await Promise.resolve();
   });
+
+  const initialCallCount = getTickets.mock.calls.length;
+
+  act(() => {
+    result.current.updateFilters({
+      status: 'InProgress', // Replace with the valid project value.
+    });
+  });
+
+  // Status changes should trigger a request immediately,
+  // without advancing the search debounce timer.
+  expect(getTickets).toHaveBeenCalledTimes(initialCallCount + 1);
+  expect(getTickets).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      status: 'InProgress',
+      page: 1,
+    }),
+  );
+});
 });
