@@ -5,7 +5,7 @@ namespace SupportDesk.Application.Contracts.Tickets;
 /// <summary>
 /// A single ticket, with the description and contact details the detail screen shows.
 /// </summary>
-public sealed class TicketDetailDto
+public class TicketDetailDto
 {
     public int Id { get; set; }
 
@@ -35,4 +35,10 @@ public sealed class TicketDetailDto
 
     /// <summary>Derived from the dates above; never stored.</summary>
     public SlaStatus SlaStatus { get; set; }
+
+    /// <summary>
+    /// False when the ticket is resolved, closed or already Critical, so a client can hide the
+    /// escalate control. The server still enforces the rule.
+    /// </summary>
+    public bool CanBeEscalated { get; set; }
 }

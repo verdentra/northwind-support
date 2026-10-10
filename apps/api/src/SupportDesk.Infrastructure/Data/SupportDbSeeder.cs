@@ -17,14 +17,28 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    IPasswordHasher passwordHasher,
+    ILogger<SupportDbSeeder> logger)
 {
-    /// <summary>Seeds the database, unless it already has tickets in it.</summary>
+    /// <summary>
+    /// The password every seeded agent signs in with. A local development fixture only: the seeder
+    /// runs in Development alone, and the value is hashed (salted, per agent) before it is stored.
+    /// </summary>
+    public const string DevelopmentPassword = "LocalDev-Only-Pa55!";
+
+    /// <summary>
+    /// Seeds the database, unless it already has tickets in it, and makes sure every agent can
+    /// sign in with <see cref="DevelopmentPassword"/>.
+    /// </summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
             logger.LogInformation("Seed data already present; skipping.");
+            await SeedMissingCredentialsAsync(ct);
             return;
         }
 
@@ -45,9 +59,34 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         SeedTickets(now, customers, categories, agents);
         await db.SaveChangesAsync(ct);
 
+        await SeedMissingCredentialsAsync(ct);
+
         logger.LogInformation(
             "Seeded {Categories} categories, {Customers} customers, {Agents} agents and {Tickets} tickets.",
             categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
+    }
+
+    /// <summary>
+    /// Gives every agent without credentials the development password, hashed now. Also covers a
+    /// database seeded before sign-in existed, so its agents can sign in after the migration.
+    /// </summary>
+    private async Task SeedMissingCredentialsAsync(CancellationToken ct)
+    {
+        var agents = await db.Set<Agent>().Where(a => a.PasswordHash == null).ToListAsync(ct);
+
+        if (agents.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var agent in agents)
+        {
+            agent.SetPasswordHash(passwordHasher.Hash(DevelopmentPassword));
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("Set development credentials for {Count} agents.", agents.Count);
     }
 
     private static List<Category> SeedCategories() =>

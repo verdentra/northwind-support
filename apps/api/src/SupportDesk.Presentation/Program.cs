@@ -1,6 +1,8 @@
 using System.Text.Json.Serialization;
+using Microsoft.OpenApi;
 using SupportDesk.Application;
 using SupportDesk.Infrastructure;
+using SupportDesk.Presentation.Authentication;
 using SupportDesk.Presentation.Extensions;
 using SupportDesk.Presentation.Filters;
 using SupportDesk.Presentation.Middleware;
@@ -25,8 +27,24 @@ builder.Services.AddCors(options => options.AddPolicy(
         .AllowAnyMethod()));
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    // An "Authorize" button in Swagger UI: paste the accessToken from POST /api/auth/login.
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "The accessToken returned by POST /api/auth/login."
+    });
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+    });
+});
 
+builder.Services.AddSlaPolicy(builder.Configuration);
+builder.Services.AddApiAuthentication(builder.Configuration);
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -44,6 +62,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors(FrontendCorsPolicy);
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 

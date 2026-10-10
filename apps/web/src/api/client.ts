@@ -25,21 +25,50 @@ export class ApiError extends Error {
   }
 }
 
+export interface RequestOptions {
+  /**
+   * Send without the access token, and do not treat a 401 as an expired session - for the
+   * sign-in call itself, where a 401 just means wrong credentials.
+   */
+  anonymous?: boolean;
+}
+
+let accessToken: string | null = null;
+let onUnauthorized: (() => void) | null = null;
+
+/** The token attached to every request from now on; null to stop sending one. */
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+/** Called whenever an authenticated request comes back 401 (e.g. the token expired). */
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
 /**
- * The single place that talks to the API. Returns parsed JSON, or throws an
- * {@link ApiError} that callers can show to the user.
+ * The single place that talks to the API. Attaches the access token, returns parsed JSON, or
+ * throws an {@link ApiError} that callers can show to the user.
  */
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
+  const authorization: Record<string, string> =
+    accessToken && !options.anonymous ? { Authorization: `Bearer ${accessToken}` } : {};
+
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...authorization,
       ...(init?.headers ?? {}),
     },
   });
 
   if (!response.ok) {
     const problem = await readProblem(response);
+
+    if (response.status === 401 && !options.anonymous) {
+      onUnauthorized?.();
+    }
 
     throw new ApiError(
       response.status,

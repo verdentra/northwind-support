@@ -19,6 +19,8 @@ GO
 
 SET NOCOUNT ON;
 
+/* Escalation history (Task 2 migration) references Tickets, so it goes first. */
+IF OBJECT_ID('dbo.TicketEscalations', 'U') IS NOT NULL DELETE FROM dbo.TicketEscalations;
 DELETE FROM dbo.AgentSpecializations;
 DELETE FROM dbo.Tickets;
 DELETE FROM dbo.Agents;

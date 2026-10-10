@@ -8,4 +8,13 @@ namespace SupportDesk.Domain.Repositories;
 public interface IAgentRepository
 {
     Task<Agent?> GetByIdAsync(int id, CancellationToken ct);
+
+    /// <summary>The agent with this email (case-insensitive), or null. Not tracked.</summary>
+    Task<Agent?> GetByEmailAsync(string email, CancellationToken ct);
+
+    /// <summary>
+    /// Every agent with their open-ticket count and specializations, in a single query, ordered
+    /// by id. What <see cref="AgentAssignmentPolicy"/> chooses from.
+    /// </summary>
+    Task<IReadOnlyList<AgentWorkload>> GetWorkloadsAsync(CancellationToken ct);
 }

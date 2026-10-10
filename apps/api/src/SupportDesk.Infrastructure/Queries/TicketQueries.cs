@@ -14,20 +14,23 @@ namespace SupportDesk.Infrastructure.Queries;
 /// Ticket reads. Projected in the database and never tracked. Aggregates hold only each
 /// other's ids, so the customer, category and agent labels are joined in here, on the read side.
 /// </summary>
-public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQueries
+public sealed class TicketQueries(SupportDbContext db, IClock clock, SlaPolicy slaPolicy) : ITicketQueries
 {
     /// <remarks>
-    /// Sorts and pages every ticket. The filter values bound into <paramref name="query"/>
-    /// (search, status, priority, category, customer, agent, unassigned-only) are not applied
-    /// yet: server-side filtering is still to be built.
+    /// Filters, then counts, sorts and pages - all in one SQL statement each for the count and
+    /// the page. Only the SLA status filter is applied so far; the other filter values bound into
+    /// <paramref name="query"/> (search, status, priority, category, customer, agent,
+    /// unassigned-only) are Task 1's server-side filtering, and each one is one more line in
+    /// <see cref="ApplyFilters"/>.
     /// </remarks>
     public async Task<PagedResult<TicketListItemDto>> GetPagedAsync(TicketQuery query, CancellationToken ct)
     {
-        var tickets = TicketsWithLabels();
+        var now = Now();
+        var threshold = slaPolicy.AtRiskThresholdPercent;
+
+        var tickets = TicketsWithLabels(ApplyFilters(db.Set<Ticket>().AsNoTracking(), query, now));
 
         var totalCount = await tickets.CountAsync(ct);
-
-        var now = clock.UtcNow;
 
         var items = await ApplySort(tickets, query)
             .Skip((query.Page - 1) * query.PageSize)
@@ -46,7 +49,8 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+                SlaStatus = SlaEvaluator.Evaluate(
+                    x.Ticket.SlaStartedAtUtc ?? x.Ticket.CreatedAtUtc, x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now, threshold)
             })
             .ToListAsync(ct);
 
@@ -55,9 +59,10 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
 
     public Task<TicketDetailDto?> GetDetailAsync(int id, CancellationToken ct)
     {
-        var now = clock.UtcNow;
+        var now = Now();
+        var threshold = slaPolicy.AtRiskThresholdPercent;
 
-        return TicketsWithLabels()
+        return TicketsWithLabels(db.Set<Ticket>().AsNoTracking())
             .Where(x => x.Ticket.Id == id)
             .Select(x => new TicketDetailDto
             {
@@ -75,16 +80,19 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+                SlaStatus = SlaEvaluator.Evaluate(
+                    x.Ticket.SlaStartedAtUtc ?? x.Ticket.CreatedAtUtc, x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now, threshold),
+                CanBeEscalated = Ticket.IsEscalatable(x.Ticket.Status, x.Ticket.Priority)
             })
             .FirstOrDefaultAsync(ct);
     }
 
     public async Task<IReadOnlyList<TicketListItemDto>> GetForCustomerAsync(int customerId, CancellationToken ct)
     {
-        var now = clock.UtcNow;
+        var now = Now();
+        var threshold = slaPolicy.AtRiskThresholdPercent;
 
-        return await TicketsWithLabels()
+        return await TicketsWithLabels(db.Set<Ticket>().AsNoTracking())
             .Where(x => x.Ticket.CustomerId == customerId)
             .OrderByDescending(x => x.Ticket.CreatedAtUtc)
             .ThenByDescending(x => x.Ticket.Id)
@@ -102,16 +110,72 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+                SlaStatus = SlaEvaluator.Evaluate(
+                    x.Ticket.SlaStartedAtUtc ?? x.Ticket.CreatedAtUtc, x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now, threshold)
             })
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<TicketEscalationDto>?> GetEscalationsAsync(int ticketId, CancellationToken ct)
+    {
+        if (!await db.Set<Ticket>().AsNoTracking().AnyAsync(t => t.Id == ticketId, ct))
+        {
+            return null;
+        }
+
+        // Served by IX_TicketEscalations_TicketId_EscalatedAtUtc, which is already in this order.
+        return await (
+                from escalation in db.Set<TicketEscalation>().AsNoTracking()
+                where escalation.TicketId == ticketId
+                from fromAgent in db.Set<Agent>().Where(a => a.Id == escalation.FromAgentId).DefaultIfEmpty()
+                from toAgent in db.Set<Agent>().Where(a => a.Id == escalation.ToAgentId).DefaultIfEmpty()
+                orderby escalation.EscalatedAtUtc descending, escalation.Id descending
+                select new TicketEscalationDto(
+                    escalation.Id,
+                    escalation.TicketId,
+                    escalation.FromPriority,
+                    escalation.ToPriority,
+                    fromAgent == null ? null : new AgentSummaryDto(fromAgent.Id, fromAgent.FullName),
+                    toAgent == null ? null : new AgentSummaryDto(toAgent.Id, toAgent.FullName),
+                    escalation.FromDueAtUtc,
+                    escalation.ToDueAtUtc,
+                    escalation.Reason,
+                    escalation.EscalatedBy,
+                    escalation.EscalatedAtUtc))
+            .ToListAsync(ct);
+    }
+
     /// <summary>
-    /// Every ticket with the rows that label it. Filter and sort this, then project.
+    /// Every filter the list supports, applied to the tickets before they are joined, counted,
+    /// sorted or paged, so the database does all of it. A new filter is one more <c>if</c> here.
     /// </summary>
-    private IQueryable<TicketWithLabels> TicketsWithLabels() =>
-        from ticket in db.Set<Ticket>().AsNoTracking()
+    private IQueryable<Ticket> ApplyFilters(IQueryable<Ticket> tickets, TicketQuery query, DateTime now)
+    {
+        if (query.SlaStatus is { } slaStatus)
+        {
+            tickets = tickets.Where(SlaStatusFilter.Matching(slaStatus, now, slaPolicy.AtRiskThresholdPercent));
+        }
+
+        return tickets;
+    }
+
+    /// <summary>
+    /// The current time, cut to whole milliseconds: the precision of the datetime2(3) columns it
+    /// is compared with, so SQL Server and the projected SLA status see exactly the same instant.
+    /// </summary>
+    private DateTime Now()
+    {
+        var now = clock.UtcNow;
+
+        return now.AddTicks(-(now.Ticks % TimeSpan.TicksPerMillisecond));
+    }
+
+    /// <summary>
+    /// The given tickets with the rows that label them. Filter the tickets first, then sort and
+    /// project this.
+    /// </summary>
+    private IQueryable<TicketWithLabels> TicketsWithLabels(IQueryable<Ticket> tickets) =>
+        from ticket in tickets
         join customer in db.Set<Customer>() on ticket.CustomerId equals customer.Id
         join category in db.Set<Category>() on ticket.CategoryId equals category.Id
         from agent in db.Set<Agent>().Where(a => a.Id == ticket.AssignedAgentId).DefaultIfEmpty()

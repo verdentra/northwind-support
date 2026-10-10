@@ -3,9 +3,11 @@ using SupportDesk.Application.Abstractions;
 using SupportDesk.Application.Contracts.Tickets;
 using SupportDesk.Application.Features.Tickets.Commands.AssignTicket;
 using SupportDesk.Application.Features.Tickets.Commands.ChangeTicketStatus;
+using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
 using SupportDesk.Application.Features.Tickets.Commands.RaiseTicket;
 using SupportDesk.Application.Features.Tickets.Queries.GetTicket;
 using SupportDesk.Domain.Aggregates.Agents;
+using SupportDesk.Domain.Aggregates.Categories;
 using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
 using SupportDesk.Domain.Repositories;
@@ -15,17 +17,20 @@ namespace SupportDesk.UnitTests.Application.Features.Tickets.Commands;
 
 /// <summary>
 /// Shared arrangement for the ticket command tests: mocked repositories and queries, a fixed
-/// clock, and command handlers wired to all of them.
+/// clock, the development SLA policy, and command handlers wired to all of them.
 /// </summary>
+/// <remarks>
+/// By default every customer is Standard, every category is a plain one (no specialist, no
+/// forced priority) and there are no agents; tests override what matters to them.
+/// </remarks>
 internal sealed class TicketCommandTestContext
 {
     public TicketCommandTestContext()
     {
-        Customers.Setup(c => c.ExistsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
-        Categories.Setup(c => c.ExistsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        WithCustomer(CustomerTier.Standard);
+        WithCategory("Technical");
+        WithAgents();
+        SignedInAs(4, "Team Lead");
 
         Tickets.Setup(t => t.NextReferenceAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("TCK-0041");
@@ -36,7 +41,7 @@ internal sealed class TicketCommandTestContext
 
         // Every command returns the ticket as re-read once its change has been saved.
         TicketQueries.Setup(q => q.GetDetailAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TicketDetailDto
+            .ReturnsAsync(() => new TicketDetailDto
             {
                 Id = 41,
                 Reference = "TCK-0041",
@@ -47,14 +52,18 @@ internal sealed class TicketCommandTestContext
         var getTicket = new GetTicketQueryHandler(TicketQueries.Object);
 
         RaiseTicket = new RaiseTicketCommandHandler(
-            Tickets.Object, Customers.Object, Categories.Object, UnitOfWork.Object, Clock, getTicket,
-            NullLogger<RaiseTicketCommandHandler>.Instance);
+            Tickets.Object, Customers.Object, Categories.Object, Agents.Object, UnitOfWork.Object, Clock,
+            TestSla.Policy, getTicket, NullLogger<RaiseTicketCommandHandler>.Instance);
 
         ChangeTicketStatus = new ChangeTicketStatusCommandHandler(Tickets.Object, UnitOfWork.Object, Clock, getTicket);
 
         AssignTicket = new AssignTicketCommandHandler(
             Tickets.Object, Agents.Object, UnitOfWork.Object, Clock, getTicket,
             NullLogger<AssignTicketCommandHandler>.Instance);
+
+        EscalateTicket = new EscalateTicketCommandHandler(
+            Tickets.Object, Customers.Object, Categories.Object, Agents.Object, UnitOfWork.Object, Clock,
+            TestSla.Policy, CurrentUser.Object, getTicket, NullLogger<EscalateTicketCommandHandler>.Instance);
     }
 
     public Mock<ITicketRepository> Tickets { get; } = new();
@@ -69,6 +78,8 @@ internal sealed class TicketCommandTestContext
 
     public Mock<ITicketQueries> TicketQueries { get; } = new();
 
+    public Mock<ICurrentUser> CurrentUser { get; } = new();
+
     public FixedClock Clock { get; } = new();
 
     public RaiseTicketCommandHandler RaiseTicket { get; }
@@ -76,6 +87,8 @@ internal sealed class TicketCommandTestContext
     public ChangeTicketStatusCommandHandler ChangeTicketStatus { get; }
 
     public AssignTicketCommandHandler AssignTicket { get; }
+
+    public EscalateTicketCommandHandler EscalateTicket { get; }
 
     /// <summary>The ticket handed to the repository by the last create call.</summary>
     public Ticket? AddedTicket { get; private set; }
@@ -99,6 +112,28 @@ internal sealed class TicketCommandTestContext
         }
 
         Agents.Setup(a => a.GetByIdAsync(id, It.IsAny<CancellationToken>())).ReturnsAsync(agent);
+    }
+
+    /// <summary>Every customer looked up has this tier.</summary>
+    public void WithCustomer(CustomerTier tier) =>
+        Customers.Setup(c => c.GetByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Customer("Contoso Ltd", "support@contoso.example", null, tier, Clock.UtcNow));
+
+    /// <summary>Every category looked up has these rules.</summary>
+    public void WithCategory(string name, bool requiresSpecialist = false, bool forcesCriticalPriority = false) =>
+        Categories.Setup(c => c.GetByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Category(name, requiresSpecialist, forcesCriticalPriority));
+
+    /// <summary>The agents, with their workloads, that assignment chooses from.</summary>
+    public void WithAgents(params AgentWorkload[] agents) =>
+        Agents.Setup(a => a.GetWorkloadsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(agents);
+
+    /// <summary>The agent the access token says is making the request; nulls for an anonymous one.</summary>
+    public void SignedInAs(int? agentId, string? fullName)
+    {
+        CurrentUser.Setup(u => u.AgentId).Returns(agentId);
+        CurrentUser.Setup(u => u.FullName).Returns(fullName);
     }
 
     public void VerifySaved(Times times) =>
