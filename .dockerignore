@@ -1,0 +1,28 @@
+# The build context is the repository root; only what apps/api/Dockerfile needs is sent.
+
+# Build output and dependencies - restored and built inside the image.
+**/bin/
+**/obj/
+**/node_modules/
+**/TestResults/
+
+# Source control, editors and local tooling.
+.git/
+.github/
+.vs/
+.vscode/
+.config/
+**/*.user
+
+# Secrets and environment-specific configuration: supplied at run time, never baked in.
+.env
+**/appsettings.Development.json
+**/launchSettings.json
+
+# Not part of the API image.
+apps/web/
+apps/api/tests/
+db/
+spec/
+*.md
+*.pdf

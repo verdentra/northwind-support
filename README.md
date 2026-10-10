@@ -32,9 +32,9 @@ filters (`search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAg
 immutable history, all five SLA statuses including `AtRisk`, the SQL-side SLA filter and the UI for
 all of it - is implemented; see [Task 2](#task-2-ticket-escalation--assignment) below.
 Task 3 - agent sign-in with hashed passwords, JWT access tokens and every endpoint closed by
-default - is implemented; see [Task 3](#task-3-login-and-authentication). The SLA summary report is
-not implemented. Docker Compose currently provides SQL Server only; there is no API image or API
-service.
+default - is implemented; see [Task 3](#task-3-login-and-authentication). Task 4 - a multi-stage
+API image and an `api` service in Docker Compose - is implemented; see [Task 4](#task-4-docker).
+The SLA summary report is not implemented.
 
 ## Architecture
 
@@ -150,6 +150,7 @@ Both pass on a clean checkout and neither needs a database.
 | `GET /api/customers` · `/api/agents` · `/api/categories` | Reference data |
 | `POST /api/auth/login` | Sign in; returns a JWT, its expiry and the agent. The only open endpoint |
 | `GET /api/auth/me` | The signed-in agent, or `401` |
+| `GET /health` | `200` / `503` with `{ status, checks: { database } }`. Open, no token |
 
 Every endpoint except `POST /api/auth/login` (and Swagger) needs `Authorization: Bearer <token>`.
 Errors are `ProblemDetails`: `400` validation, `401` not signed in / bad credentials, `404` not
@@ -172,8 +173,10 @@ and 40 tickets across every status, priority and SLA state.
 
 ### Configuration
 
-The numbers live only in the existing `Sla` section of
-`apps/api/src/SupportDesk.Presentation/appsettings.Development.json`:
+The numbers live only in the `Sla` section of
+`apps/api/src/SupportDesk.Presentation/appsettings.json` (moved there from
+`appsettings.Development.json` in Task 4: they are business rules, not environment settings, and the
+Docker image deliberately ships without the Development file):
 
 ```json
 "Sla": {
@@ -187,8 +190,7 @@ The numbers live only in the existing `Sla` section of
 It is bound to `SlaOptions` and validated **at start-up** (`ValidateOnStart`): a missing priority,
 a multiplier outside (0, 1], a non-positive minimum or a threshold outside 0-100 stops the API with
 a message naming the key. Any value can be overridden the usual .NET way, e.g.
-`Sla__BaseWindowHours__High=6`. `appsettings.json` deliberately has no `Sla` section, so a
-non-Development environment must supply one rather than silently getting defaults. Category
+`Sla__BaseWindowHours__High=6`. Category
 behaviour comes only from the `RequiresSpecialist` / `ForcesCriticalPriority` flags; no category
 name appears in code.
 
@@ -419,6 +421,85 @@ A key from a secret store and rotated (or asymmetric keys so the API only needs 
 HTTPS only, an HttpOnly cookie or a backend-for-frontend instead of script-readable storage, short
 access tokens with refresh tokens, sign-in rate limiting and lockout, and audit logging of
 sign-ins. Registration, password reset, MFA and roles are out of scope.
+
+## Task 4: Docker
+
+### Run it
+
+```bash
+cp .env.example .env                 # PowerShell: Copy-Item .env.example .env
+docker compose up --build            # SQL Server + the API; migrates and seeds on an empty volume
+```
+
+| What | Where |
+| --- | --- |
+| API | http://localhost:5080 (Swagger at `/swagger`) |
+| Health | http://localhost:5080/health |
+| Web app against the container | `VITE_API_PROXY_TARGET=http://localhost:5080 npm run web`, then http://localhost:5173 (PowerShell: `$env:VITE_API_PROXY_TARGET="http://localhost:5080"; npm run web`) |
+
+Sign in with the [development login](#development-login). `docker compose down -v` wipes the
+database volume; the next `up` migrates and seeds it again.
+
+### How it is built
+
+- **Multi-stage `apps/api/Dockerfile`**, built from the repository root (DK-1). The SDK stage first
+  copies only `global.json`, `Directory.Build.props`, `Directory.Packages.props` and the four API
+  `.csproj` files and runs `dotnet restore`, then copies the source and publishes with
+  `--no-restore`. Restore is its own layer, so changing a `.cs` file reuses it. The final stage is
+  `mcr.microsoft.com/dotnet/aspnet:10.0`: runtime only, no SDK or source.
+- **`.dockerignore`** (DK-2) keeps out `bin/`, `obj/`, `node_modules/`, `.git/`, `.env`, the web
+  app, the tests, and every `appsettings.Development.json` and `launchSettings.json`.
+- **Non-root, HTTP 8080, no certificates** (DK-3): `USER $APP_UID` (the `app` user the .NET images
+  provide), `ASPNETCORE_HTTP_PORTS=8080`. TLS belongs to whatever sits in front of the container.
+- **No configuration or secret in the image** (DK-4). The connection string, the JWT key and
+  `ASPNETCORE_ENVIRONMENT` come from environment variables set by Compose from `.env`. Without
+  `Jwt__SigningKey` the API stops at start-up with a message naming it. The only settings file in the image is
+  `appsettings.json`, which holds logging defaults and the SLA rules (business rules, identical in
+  every environment - moved there from the Development file for this reason).
+- **`api` service** (DK-5): built from the Dockerfile, published on `localhost:5080`, connecting to
+  `Server=sqlserver,1433` by service name, and started only once the SQL Server health check
+  passes (`depends_on: condition: service_healthy`).
+- **Migrations on start-up** (DK-6) happen because Compose runs the container as `Development`,
+  which applies migrations and seeds demo data, exactly like `npm run api`.
+- **`GET /health`** (DK-7) is a standard ASP.NET Core health check: `DatabaseHealthCheck` opens a
+  connection to the database. `200 {"status":"Healthy","checks":{"database":"Healthy"}}` or `503`.
+  It is mapped with `.AllowAnonymous()` in `Program.cs`, next to the fallback policy that closes
+  everything else, and reports no connection details.
+
+### Migrations in a real deployment
+
+Applying migrations when the app starts is a development convenience. In production it would be
+a separate, deliberate pipeline step - an EF Core migration bundle
+(`dotnet ef migrations bundle`) or a reviewed SQL script (`dotnet ef migrations script --idempotent`)
+run once before the new version rolls out. Reasons: several replicas starting together would race
+to migrate; the app's runtime database login should not need DDL rights; a failed migration should
+stop a release, not crash-loop the containers; and schema changes deserve review and a rollback
+plan. The demo seed data would not exist in production at all.
+
+### Verification
+
+Run these to check each requirement (the figures below are to be filled in from your own run):
+
+| Check | Command | Expected |
+| --- | --- | --- |
+| Clean start | `docker compose down -v` then `docker compose up --build` | API logs "Seeded ..." ; `curl http://localhost:5080/health` gives `Healthy` |
+| Seeded data | `POST /api/auth/login`, then `GET /api/tickets` with the token | 200 with 40 tickets (unauthenticated: 401) |
+| Restore cache | Edit any `.cs` file, `docker compose build api` | The `RUN dotnet restore` step shows `CACHED` |
+| Image size | `docker images supportdesk-api` and `docker images mcr.microsoft.com/dotnet/sdk:10.0` | Record the measured runtime and SDK image sizes after building; not measured in this environment because Docker is unavailable. |
+| Not root | `docker compose exec api whoami` | `app` |
+
+Docker-specific checks (clean startup, seeded API response, restore-layer reuse, image sizes and
+runtime user) could not be executed in this environment because the Docker CLI is unavailable.
+The table gives the commands and expected results for a Docker-enabled machine; no container
+build or smoke-test result is claimed here.
+
+### Production changes (not done here)
+
+Pin base images by digest and rebuild regularly for patches; read the JWT key and connection
+string from a secret store rather than environment variables; run as `Production` with migrations
+as a pipeline step; add a container `HEALTHCHECK` (or orchestrator probes) on `/health`; terminate
+TLS at a reverse proxy or ingress; consider a chiseled or distroless runtime image for a smaller
+attack surface.
 
 ## Troubleshooting
 

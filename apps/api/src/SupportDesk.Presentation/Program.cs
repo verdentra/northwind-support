@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.OpenApi;
 using SupportDesk.Application;
 using SupportDesk.Infrastructure;
@@ -67,5 +68,10 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Open without a token, decided here rather than by the endpoint, and reporting whether the
+// database answers: 200 when healthy, 503 when not.
+app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = HealthResponse.WriteAsync })
+    .AllowAnonymous();
 
 app.Run();

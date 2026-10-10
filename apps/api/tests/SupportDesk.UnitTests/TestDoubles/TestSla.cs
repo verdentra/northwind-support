@@ -5,7 +5,7 @@ namespace SupportDesk.UnitTests.TestDoubles;
 
 /// <summary>
 /// The SLA policy the tests run against: the same values as the <c>Sla</c> section of
-/// appsettings.Development.json, built through the same <see cref="SlaOptions"/> the API binds.
+/// appsettings.json, built through the same <see cref="SlaOptions"/> the API binds.
 /// </summary>
 public static class TestSla
 {
