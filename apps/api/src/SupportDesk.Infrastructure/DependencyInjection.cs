@@ -4,8 +4,10 @@ using Microsoft.Extensions.DependencyInjection;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Repositories;
 using SupportDesk.Infrastructure.Data;
+using SupportDesk.Infrastructure.HealthChecks;
 using SupportDesk.Infrastructure.Queries;
 using SupportDesk.Infrastructure.Repositories;
+using SupportDesk.Infrastructure.Security;
 using SupportDesk.Infrastructure.Services;
 
 namespace SupportDesk.Infrastructure;
@@ -30,6 +32,7 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<SupportDbContext>());
 
         services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton<IPasswordHasher, IdentityPasswordHasher>();
 
         services.AddScoped<ITicketRepository, TicketRepository>();
         services.AddScoped<IAgentRepository, AgentRepository>();
@@ -42,6 +45,8 @@ public static class DependencyInjection
         services.AddScoped<ICategoryQueries, CategoryQueries>();
 
         services.AddScoped<SupportDbSeeder>();
+
+        services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("database");
 
         return services;
     }

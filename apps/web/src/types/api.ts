@@ -79,6 +79,47 @@ export interface TicketDetail {
   dueAtUtc: string | null;
   resolvedAtUtc: string | null;
   slaStatus: SlaStatus;
+  /** False when the ticket is resolved, closed or already Critical. The server still decides. */
+  canBeEscalated: boolean;
+}
+
+/** Why a new ticket got the priority, due date and owner it did. */
+export interface Triage {
+  priorityReason: string;
+  slaReason: string;
+  assignmentReason: string;
+}
+
+/** Response of POST /api/tickets: the created ticket plus the triage decision. */
+export interface RaisedTicket extends TicketDetail {
+  triage: Triage;
+}
+
+/** Who escalated is taken from the access token by the API, never sent. */
+export interface EscalateTicketPayload {
+  reason: string;
+}
+
+/** One row of a ticket's escalation history. */
+export interface TicketEscalation {
+  id: number;
+  ticketId: number;
+  fromPriority: TicketPriority;
+  toPriority: TicketPriority;
+  fromAgent: AgentSummary | null;
+  toAgent: AgentSummary | null;
+  fromDueAtUtc: string | null;
+  toDueAtUtc: string;
+  reason: string;
+  escalatedBy: string;
+  escalatedAtUtc: string;
+}
+
+/** Response of POST /api/tickets/{id}/escalate. */
+export interface EscalationResult {
+  ticket: TicketDetail;
+  escalation: TicketEscalation;
+  assignmentReason: string;
 }
 
 /** Everything the ticket list screen can narrow the results by. */
@@ -90,6 +131,7 @@ export interface TicketFilters {
   customerId?: number;
   assignedAgentId?: number;
   unassignedOnly?: boolean;
+  slaStatus?: SlaStatus;
   page: number;
   pageSize: number;
   sortBy: TicketSortField;
@@ -139,6 +181,20 @@ export interface CustomerDetail {
   tier: CustomerTier;
   createdAtUtc: string;
   tickets: TicketListItem[];
+}
+
+/** The signed-in agent. */
+export interface CurrentAgent {
+  id: number;
+  fullName: string;
+  email: string;
+}
+
+/** Response of POST /api/auth/login. */
+export interface LoginResponse {
+  accessToken: string;
+  expiresAtUtc: string;
+  agent: CurrentAgent;
 }
 
 /** RFC 7807 problem document, which is how the API reports every failure. */

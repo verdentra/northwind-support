@@ -1,3 +1,4 @@
+using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
 
 namespace SupportDesk.UnitTests.TestDoubles;
@@ -10,14 +11,29 @@ namespace SupportDesk.UnitTests.TestDoubles;
 public sealed class TicketBuilder
 {
     private string _reference = "TCK-0001";
+    private int _customerId = 1;
+    private int _categoryId = 1;
     private TicketPriority _priority = TicketPriority.Medium;
     private TicketStatus _status = TicketStatus.New;
     private int? _assignedAgentId;
     private DateTime? _resolvedAtUtc;
+    private CustomerTier? _slaTier;
 
     public TicketBuilder WithReference(string reference)
     {
         _reference = reference;
+        return this;
+    }
+
+    public TicketBuilder ForCustomer(int customerId)
+    {
+        _customerId = customerId;
+        return this;
+    }
+
+    public TicketBuilder InCategory(int categoryId)
+    {
+        _categoryId = categoryId;
         return this;
     }
 
@@ -46,16 +62,31 @@ public sealed class TicketBuilder
         return this;
     }
 
+    /// <summary>
+    /// Starts the ticket's SLA window at creation (<see cref="FixedClock.DefaultNow"/>) with
+    /// <see cref="TestSla.Policy"/>, as triage would.
+    /// </summary>
+    public TicketBuilder WithSla(CustomerTier tier = CustomerTier.Standard)
+    {
+        _slaTier = tier;
+        return this;
+    }
+
     public Ticket Build()
     {
         var ticket = Ticket.Raise(
             _reference,
             "Something is not working",
             "A description long enough to be realistic.",
-            customerId: 1,
-            categoryId: 1,
+            _customerId,
+            _categoryId,
             _priority,
             FixedClock.DefaultNow);
+
+        if (_slaTier is { } tier)
+        {
+            ticket.StartSlaWindow(TestSla.Policy, tier, FixedClock.DefaultNow);
+        }
 
         if (_assignedAgentId is not null)
         {

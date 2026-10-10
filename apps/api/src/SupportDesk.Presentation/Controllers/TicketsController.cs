@@ -3,8 +3,10 @@ using SupportDesk.Application.Contracts.Common;
 using SupportDesk.Application.Contracts.Tickets;
 using SupportDesk.Application.Features.Tickets.Commands.AssignTicket;
 using SupportDesk.Application.Features.Tickets.Commands.ChangeTicketStatus;
+using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
 using SupportDesk.Application.Features.Tickets.Commands.RaiseTicket;
 using SupportDesk.Application.Features.Tickets.Queries.GetTicket;
+using SupportDesk.Application.Features.Tickets.Queries.GetTicketEscalations;
 using SupportDesk.Application.Features.Tickets.Queries.SearchTickets;
 
 namespace SupportDesk.Presentation.Controllers;
@@ -27,9 +29,13 @@ public sealed class TicketsController : ControllerBase
     public Task<TicketDetailDto> Get(int id, [FromServices] GetTicketQueryHandler handler, CancellationToken ct) =>
         handler.HandleAsync(id, ct);
 
-    /// <summary>Raises a new ticket.</summary>
+    /// <summary>
+    /// Raises a new ticket and triages it: priority, due date and owner, with the reasons. A
+    /// ticket nobody can take is still created (201), unassigned.
+    /// </summary>
     [HttpPost]
-    public async Task<ActionResult<TicketDetailDto>> Create(
+    [ProducesResponseType<RaisedTicketDto>(StatusCodes.Status201Created)]
+    public async Task<ActionResult<RaisedTicketDto>> Create(
         CreateTicketRequest request,
         [FromServices] RaiseTicketCommandHandler handler,
         CancellationToken ct)
@@ -56,4 +62,28 @@ public sealed class TicketsController : ControllerBase
         [FromServices] AssignTicketCommandHandler handler,
         CancellationToken ct) =>
         handler.HandleAsync(id, request, ct);
+
+    /// <summary>
+    /// Escalates a ticket one priority level, restarts its SLA window and re-checks its owner.
+    /// 409 when it is resolved, closed or already Critical.
+    /// </summary>
+    [HttpPost("{id:int}/escalate")]
+    [ProducesResponseType<EscalateTicketResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public Task<EscalateTicketResponse> Escalate(
+        int id,
+        EscalateTicketRequest request,
+        [FromServices] EscalateTicketCommandHandler handler,
+        CancellationToken ct) =>
+        handler.HandleAsync(id, request, ct);
+
+    /// <summary>The ticket's escalation history, newest first.</summary>
+    [HttpGet("{id:int}/escalations")]
+    public Task<IReadOnlyList<TicketEscalationDto>> GetEscalations(
+        int id,
+        [FromServices] GetTicketEscalationsQueryHandler handler,
+        CancellationToken ct) =>
+        handler.HandleAsync(id, ct);
 }

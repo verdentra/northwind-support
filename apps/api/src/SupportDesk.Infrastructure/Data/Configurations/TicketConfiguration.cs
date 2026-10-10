@@ -41,6 +41,8 @@ public sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
 
         builder.Property(t => t.ResolvedAtUtc).HasColumnType("datetime2(3)");
 
+        builder.Property(t => t.SlaStartedAtUtc).HasColumnType("datetime2(3)");
+
         // A ticket is never silently detached from the rows that give it meaning.
         builder.HasOne<Customer>()
             .WithMany()
@@ -57,7 +59,21 @@ public sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
             .HasForeignKey(t => t.AssignedAgentId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Escalation history is part of the ticket aggregate. Restrict, not cascade: tickets are
+        // never deleted by the application, and an accidental delete should fail loudly rather
+        // than silently take the audit trail with it.
+        builder.HasMany(t => t.Escalations)
+            .WithOne()
+            .HasForeignKey(e => e.TicketId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Navigation(t => t.Escalations).UsePropertyAccessMode(PropertyAccessMode.Field);
+
         builder.Ignore(t => t.IsOpen);
+
+        builder.Ignore(t => t.SlaWindowStartUtc);
+
+        builder.Ignore(t => t.CanBeEscalated);
 
         builder.HasIndex(t => t.Reference).IsUnique().HasDatabaseName("UQ_Tickets_Reference");
 

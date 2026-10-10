@@ -10,6 +10,15 @@
     <ProjectReference Include="../SupportDesk.Domain/SupportDesk.Domain.csproj" />
   </ItemGroup>
 
+  <!--
+    For ASP.NET Core Identity's PasswordHasher (Microsoft.Extensions.Identity.Core) and the health
+    check abstractions (Microsoft.Extensions.Diagnostics.HealthChecks), both part of the shared
+    framework: no extra package, and nothing from the HTTP pipeline is used here.
+  -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">

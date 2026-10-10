@@ -17,6 +17,8 @@ GO
 USE SupportDesk;
 GO
 
+/* Added by the Task 2 migration; dropped first because it references Tickets and Agents. */
+IF OBJECT_ID('dbo.TicketEscalations', 'U')    IS NOT NULL DROP TABLE dbo.TicketEscalations;
 IF OBJECT_ID('dbo.AgentSpecializations', 'U') IS NOT NULL DROP TABLE dbo.AgentSpecializations;
 IF OBJECT_ID('dbo.Tickets', 'U')              IS NOT NULL DROP TABLE dbo.Tickets;
 IF OBJECT_ID('dbo.Agents', 'U')               IS NOT NULL DROP TABLE dbo.Agents;

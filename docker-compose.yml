@@ -1,5 +1,5 @@
-# SQL Server for local development only. The password below is a throwaway local
-# placeholder - never commit a real credential.
+# Local development only. Every value comes from .env (copy .env.example) or the defaults below;
+# the defaults are throwaway local placeholders - never commit a real credential.
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -22,6 +22,25 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: supportdesk-api
+    container_name: supportdesk-api
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      # Development: Swagger, plus migrate-and-seed on start-up (see README, "Docker").
+      ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Development}"
+      # Reaches SQL Server by its service name on the compose network.
+      ConnectionStrings__Default: "Server=sqlserver,1433;Database=SupportDesk;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Local_Dev_Password1};TrustServerCertificate=True;Encrypt=False"
+      # No default on purpose: without it in .env the API stops at start-up, naming the setting.
+      Jwt__SigningKey: "${Jwt__SigningKey:-}"
+    ports:
+      - "5080:8080"
 
 volumes:
   supportdesk-sql:
