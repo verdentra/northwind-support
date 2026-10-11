@@ -3,6 +3,7 @@ using SupportDesk.Application.Contracts.Common;
 using SupportDesk.Application.Contracts.Tickets;
 using SupportDesk.Application.Features.Tickets.Commands.AssignTicket;
 using SupportDesk.Application.Features.Tickets.Commands.ChangeTicketStatus;
+using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
 using SupportDesk.Application.Features.Tickets.Commands.RaiseTicket;
 using SupportDesk.Application.Features.Tickets.Queries.GetTicket;
 using SupportDesk.Application.Features.Tickets.Queries.SearchTickets;
@@ -56,4 +57,28 @@ public sealed class TicketsController : ControllerBase
         [FromServices] AssignTicketCommandHandler handler,
         CancellationToken ct) =>
         handler.HandleAsync(id, request, ct);
+
+    [HttpPost("{id:int}/escalate")]
+    public async Task<ActionResult<EscalationResultDto>> Escalate(
+        int id, EscalateTicketRequest request,
+        [FromServices] EscalateTicketCommandHandler handler, CancellationToken ct)
+    {
+        // The identity comes from the validated JWT; any actor string sent by the client is ignored.
+        var actor = User.FindFirst("name")?.Value;
+        if (string.IsNullOrWhiteSpace(actor))
+        {
+            return Unauthorized(new ProblemDetails
+            {
+                Status = StatusCodes.Status401Unauthorized,
+                Title = "The access token does not identify an agent."
+            });
+        }
+
+        return Ok(await handler.HandleAsync(id, request, actor, ct));
+    }
+
+    [HttpGet("{id:int}/escalations")]
+    public Task<IReadOnlyList<TicketEscalationDto>> Escalations(int id,
+        [FromServices] SupportDesk.Application.Features.Tickets.Queries.GetEscalations.GetEscalationsQueryHandler handler,
+        CancellationToken ct) => handler.HandleAsync(id, ct);
 }

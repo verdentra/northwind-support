@@ -20,6 +20,7 @@ GO
 SET NOCOUNT ON;
 
 DELETE FROM dbo.AgentSpecializations;
+DELETE FROM dbo.TicketEscalations;
 DELETE FROM dbo.Tickets;
 DELETE FROM dbo.Agents;
 DELETE FROM dbo.Customers;
@@ -61,13 +62,16 @@ SET IDENTITY_INSERT dbo.Customers OFF;
    so he must be excluded by the "eligible agent" rule.
    Yuki Tanaka is inactive but still owns historic closed tickets.            */
 SET IDENTITY_INSERT dbo.Agents ON;
-INSERT INTO dbo.Agents (Id, FullName, Email, IsActive, MaxOpenTickets, CreatedAtUtc) VALUES
-    (1, N'Alex Turner',    N'alex.turner@northwind-support.example',    1, 10, DATEADD(DAY, -500, @Now)),
-    (2, N'Ben Osei',       N'ben.osei@northwind-support.example',       1,  8, DATEADD(DAY, -460, @Now)),
-    (3, N'Priya Nair',     N'priya.nair@northwind-support.example',     1,  8, DATEADD(DAY, -400, @Now)),
-    (4, N'Sara Lindqvist', N'sara.lindqvist@northwind-support.example', 1,  6, DATEADD(DAY, -280, @Now)),
-    (5, N'Marcus Doyle',   N'marcus.doyle@northwind-support.example',   1,  6, DATEADD(DAY, -200, @Now)),
-    (6, N'Yuki Tanaka',    N'yuki.tanaka@northwind-support.example',    0,  8, DATEADD(DAY, -600, @Now));
+/* Development-only login password for these PasswordHasher V3 fixtures:
+   DemoOnly!ChangeMe2026. Each agent has a unique salted hash. The application
+   seeder generates fresh hashes at runtime. Never reuse these credentials.    */
+INSERT INTO dbo.Agents (Id, FullName, Email, PasswordHash, IsActive, MaxOpenTickets, CreatedAtUtc) VALUES
+    (1, N'Alex Turner',    N'alex.turner@northwind-support.example',    N'AQAAAAIAAYagAAAAEIv0tUnPsHEhWbCubYl8ACauLZiujcGAmD960Gd6D/iPUUjrCRjgD71wFJwr5fTXYg==', 1, 10, DATEADD(DAY, -500, @Now)),
+    (2, N'Ben Osei',       N'ben.osei@northwind-support.example',       N'AQAAAAIAAYagAAAAEBwSNqc0KZ4tX8ArSePHrj2Xa0R9PWT2S7HnP2IgTLfInfR8CN2NO/ZEDxHw3pWsWA==', 1,  8, DATEADD(DAY, -460, @Now)),
+    (3, N'Priya Nair',     N'priya.nair@northwind-support.example',     N'AQAAAAIAAYagAAAAEFpbdOwwsWVDzXQMaYwSnWJp11AQoVGqsgiiDJt8DTbhkjAf5vAIoI6SWAIyg2Mg1g==', 1,  8, DATEADD(DAY, -400, @Now)),
+    (4, N'Sara Lindqvist', N'sara.lindqvist@northwind-support.example', N'AQAAAAIAAYagAAAAEOnAY3Pt91cbazJ34ajOfGY+Gmq7bEu1pP2cfGIrP2h7IVVqPNcatPhsrGGrJWGbpA==', 1,  6, DATEADD(DAY, -280, @Now)),
+    (5, N'Marcus Doyle',   N'marcus.doyle@northwind-support.example',   N'AQAAAAIAAYagAAAAELPrZnwJDgjNUMM1bVzZhGam7UWGJhlgy6ul6Mzn920wzc2arE4TjYjH9BmwlYxDKw==', 1,  6, DATEADD(DAY, -200, @Now)),
+    (6, N'Yuki Tanaka',    N'yuki.tanaka@northwind-support.example',    N'AQAAAAIAAYagAAAAEOUp7QU4V6lqpAWdeiy0uKZ49bg22eV14k5ZVWPKvOdvc78tFZRdP/+pvIl/vT18Bw==', 0,  8, DATEADD(DAY, -600, @Now));
 SET IDENTITY_INSERT dbo.Agents OFF;
 
 /* ---------------------------------------------------- AgentSpecializations */
@@ -145,7 +149,7 @@ INSERT INTO dbo.AgentSpecializations (AgentId, CategoryId) VALUES
 )
 INSERT INTO dbo.Tickets
     (Reference, Title, [Description], CustomerId, CategoryId, AssignedAgentId, Priority, [Status],
-     CreatedAtUtc, UpdatedAtUtc, DueAtUtc, ResolvedAtUtc)
+     CreatedAtUtc, UpdatedAtUtc, DueAtUtc, SlaWindowSeconds, ActiveSlaWindowSeconds, ResolvedAtUtc)
 SELECT
     s.Ref,
     s.Title,
@@ -158,6 +162,8 @@ SELECT
     DATEADD(MINUTE, -s.CreatedMinutesAgo, @Now),
     DATEADD(MINUTE, -s.CreatedMinutesAgo + ISNULL(s.ResolvedAfterMinutes, s.CreatedMinutesAgo / 2), @Now),
     DATEADD(MINUTE, -s.CreatedMinutesAgo + s.SlaWindowMinutes, @Now),
+    s.SlaWindowMinutes * 60,
+    s.SlaWindowMinutes * 60,
     CASE WHEN s.ResolvedAfterMinutes IS NULL THEN NULL
          ELSE DATEADD(MINUTE, -s.CreatedMinutesAgo + s.ResolvedAfterMinutes, @Now) END
 FROM Seed AS s;
@@ -192,8 +198,10 @@ SELECT CASE
            WHEN t.[Status] IN (4, 5) AND t.ResolvedAtUtc <= t.DueAtUtc THEN 'Met'
            WHEN t.[Status] IN (4, 5) THEN 'Breached'
            WHEN SYSUTCDATETIME() > t.DueAtUtc THEN 'Breached'
-           WHEN DATEDIFF(MINUTE, SYSUTCDATETIME(), t.DueAtUtc) * 4
-                <= DATEDIFF(MINUTE, t.CreatedAtUtc, t.DueAtUtc) THEN 'AtRisk'
+           WHEN COALESCE(t.ActiveSlaWindowSeconds, t.SlaWindowSeconds) > 0
+                AND t.DueAtUtc <= DATEADD(SECOND,
+                    COALESCE(t.ActiveSlaWindowSeconds, t.SlaWindowSeconds) * 25 / 100,
+                    SYSUTCDATETIME()) THEN 'AtRisk'
            ELSE 'WithinSla'
        END AS SlaStatus,
        COUNT(*) AS Tickets
@@ -203,8 +211,10 @@ GROUP BY CASE
            WHEN t.[Status] IN (4, 5) AND t.ResolvedAtUtc <= t.DueAtUtc THEN 'Met'
            WHEN t.[Status] IN (4, 5) THEN 'Breached'
            WHEN SYSUTCDATETIME() > t.DueAtUtc THEN 'Breached'
-           WHEN DATEDIFF(MINUTE, SYSUTCDATETIME(), t.DueAtUtc) * 4
-                <= DATEDIFF(MINUTE, t.CreatedAtUtc, t.DueAtUtc) THEN 'AtRisk'
+           WHEN COALESCE(t.ActiveSlaWindowSeconds, t.SlaWindowSeconds) > 0
+                AND t.DueAtUtc <= DATEADD(SECOND,
+                    COALESCE(t.ActiveSlaWindowSeconds, t.SlaWindowSeconds) * 25 / 100,
+                    SYSUTCDATETIME()) THEN 'AtRisk'
            ELSE 'WithinSla'
        END
 ORDER BY SlaStatus;

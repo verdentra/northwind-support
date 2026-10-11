@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SupportDesk.Application.Abstractions;
@@ -10,18 +11,24 @@ namespace SupportDesk.Infrastructure.Data;
 
 /// <summary>
 /// Development seed data: the small support desk the team uses to demo the application.
-/// Mirrors <c>database/02_seed.sql</c>, including the relative timestamps, so both routes
-/// produce the same database.
+/// Ticket and agent fixtures mirror <c>db/seed.sql</c>; passwords are freshly hashed here.
 /// </summary>
 /// <remarks>
-/// Every aggregate is built through its own behaviour. The two historical values no behaviour
-/// produces - a ticket's last update and its due date - are set through EF Core directly.
+/// Every ticket is built through its domain behaviour; the historical last-update timestamp is
+/// preserved through EF Core directly.
 /// </remarks>
 public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
 {
-    /// <summary>Seeds the database, unless it already has tickets in it.</summary>
+    /// <summary>Development-only password for the six seeded agents. Never use this outside local fixtures.</summary>
+    public const string DevelopmentPassword = "DemoOnly!ChangeMe2026";
+
+    private static readonly PasswordHasher<Agent> DevelopmentPasswordHasher = new();
+
+    /// <summary>Ensures demo credentials exist, then seeds the database unless tickets already exist.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
+        await EnsureAgentPasswordHashesAsync(ct);
+
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
             logger.LogInformation("Seed data already present; skipping.");
@@ -50,6 +57,25 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
             categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
     }
 
+    private async Task EnsureAgentPasswordHashesAsync(CancellationToken ct)
+    {
+        // The migration adds an empty value for existing agent rows. Backfill them before
+        // the ticket-exists guard so an already-seeded development database can log in.
+        var agents = await db.Set<Agent>()
+            .Where(agent => agent.PasswordHash == string.Empty)
+            .ToListAsync(ct);
+
+        foreach (var agent in agents)
+        {
+            agent.SetPasswordHash(DevelopmentPasswordHasher.HashPassword(agent, DevelopmentPassword));
+        }
+
+        if (agents.Count > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
     private static List<Category> SeedCategories() =>
     [
         new("General", requiresSpecialist: false, forcesCriticalPriority: false),
@@ -74,7 +100,7 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         var yuki = new Agent("Yuki Tanaka", "yuki.tanaka@northwind-support.example", 8, now.AddDays(-600));
         yuki.Deactivate();
 
-        return
+        List<Agent> agents =
         [
             new("Alex Turner", "alex.turner@northwind-support.example", 10, now.AddDays(-500)),
             new("Ben Osei", "ben.osei@northwind-support.example", 8, now.AddDays(-460)),
@@ -83,6 +109,13 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
             new("Marcus Doyle", "marcus.doyle@northwind-support.example", 6, now.AddDays(-200)),
             yuki
         ];
+
+        foreach (var agent in agents)
+        {
+            agent.SetPasswordHash(DevelopmentPasswordHasher.HashPassword(agent, DevelopmentPassword));
+        }
+
+        return agents;
     }
 
     /// <summary>
@@ -180,6 +213,8 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
                 row.Priority,
                 createdAtUtc);
 
+            ticket.SetInitialSlaWindow(checked(row.SlaWindowMinutes * 60), createdAtUtc);
+
             if (row.AgentIndex is not null)
             {
                 ticket.AssignTo(agents[row.AgentIndex.Value - 1].Id, createdAtUtc);
@@ -194,7 +229,6 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
             var entry = db.Add(ticket);
             entry.Property(t => t.UpdatedAtUtc).CurrentValue =
                 createdAtUtc.AddMinutes(row.ResolvedAfterMinutes ?? row.CreatedMinutesAgo / 2);
-            entry.Property(t => t.DueAtUtc).CurrentValue = createdAtUtc.AddMinutes(row.SlaWindowMinutes);
         }
     }
 
