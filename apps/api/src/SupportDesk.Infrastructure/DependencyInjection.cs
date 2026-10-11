@@ -1,7 +1,10 @@
+
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SupportDesk.Application.Abstractions;
+using SupportDesk.Domain.Aggregates.Agents;
 using SupportDesk.Domain.Repositories;
 using SupportDesk.Infrastructure.Data;
 using SupportDesk.Infrastructure.Queries;
@@ -30,8 +33,10 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<SupportDbContext>());
 
         services.AddSingleton<IClock, SystemClock>();
+        services.AddScoped<IPasswordHasher<Agent>, PasswordHasher<Agent>>();
 
         services.AddScoped<ITicketRepository, TicketRepository>();
+        services.AddScoped<ITicketEscalationRepository, TicketEscalationRepository>();
         services.AddScoped<IAgentRepository, AgentRepository>();
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<ICategoryRepository, CategoryRepository>();

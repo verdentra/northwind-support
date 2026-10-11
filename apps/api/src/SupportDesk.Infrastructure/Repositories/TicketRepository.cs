@@ -5,10 +5,6 @@ using SupportDesk.Infrastructure.Data;
 
 namespace SupportDesk.Infrastructure.Repositories;
 
-/// <summary>
-/// Loads and stores <see cref="Ticket"/> aggregates. Loaded tickets are tracked, so the unit
-/// of work saves whatever their methods changed.
-/// </summary>
 public sealed class TicketRepository(SupportDbContext db) : ITicketRepository
 {
     public Task<Ticket?> GetByIdAsync(int id, CancellationToken ct) =>
@@ -16,8 +12,6 @@ public sealed class TicketRepository(SupportDbContext db) : ITicketRepository
 
     public async Task<string> NextReferenceAsync(CancellationToken ct)
     {
-        // Single-instance application: the highest id so far is good enough. A database
-        // sequence would be the answer if more than one API instance created tickets.
         var lastId = await db.Set<Ticket>()
             .AsNoTracking()
             .OrderByDescending(t => t.Id)
@@ -29,4 +23,12 @@ public sealed class TicketRepository(SupportDbContext db) : ITicketRepository
 
     public async Task AddAsync(Ticket ticket, CancellationToken ct) =>
         await db.Set<Ticket>().AddAsync(ticket, ct);
+
+    public Task<int> CountOpenByAgentAsync(int agentId, CancellationToken ct) =>
+        db.Set<Ticket>()
+            .CountAsync(
+                t => t.AssignedAgentId == agentId
+                    && t.Status != TicketStatus.Resolved
+                    && t.Status != TicketStatus.Closed,
+                ct);
 }

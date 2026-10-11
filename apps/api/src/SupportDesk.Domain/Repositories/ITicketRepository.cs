@@ -15,4 +15,7 @@ public interface ITicketRepository
     Task<string> NextReferenceAsync(CancellationToken ct);
 
     Task AddAsync(Ticket ticket, CancellationToken ct);
+
+    /// <summary>Counts tickets assigned to an agent that are not resolved or closed.</summary>
+    Task<int> CountOpenByAgentAsync(int agentId, CancellationToken ct);
 }

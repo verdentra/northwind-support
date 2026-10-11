@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef  } from 'react';
 import { ApiError } from '../../../api/client';
 import { ticketsApi } from '../../../api/tickets';
 import type { PagedResult, TicketFilters, TicketListItem } from '../../../types/api';
@@ -13,6 +13,7 @@ export const emptyFilters: TicketFilters = {
   customerId: undefined,
   assignedAgentId: undefined,
   unassignedOnly: false,
+  slaStatus: undefined,
   page: 1,
   pageSize: 20,
   sortBy: 'createdAtUtc',
@@ -29,6 +30,8 @@ interface State {
 export function useTicketList() {
   const [filters, setFilters] = useState<TicketFilters>(emptyFilters);
   const [state, setState] = useState<State>({ isLoading: true });
+  const shouldFetchImmediately = useRef(true);  
+
 
   const load = async () => {
     setState((current) => ({ ...current, isLoading: true, error: undefined }));
@@ -43,16 +46,46 @@ export function useTicketList() {
   };
 
   useEffect(() => {
-    const handle = window.setTimeout(load, DEBOUNCE_MS);
+    
+    if (shouldFetchImmediately.current) {
+      shouldFetchImmediately.current = false;
+      void load();
+      return;
+    }
+
+    const handle = window.setTimeout(() => {
+      void load();
+    }, DEBOUNCE_MS);
+
 
     return () => window.clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- filters object identity changes every render
-  }, [filters.search, filters.page, filters.pageSize]);
+  }, [
+      filters.search,
+      filters.status,
+      filters.priority,
+      filters.categoryId,
+      filters.customerId,
+      filters.assignedAgentId,
+      filters.unassignedOnly,
+      filters.slaStatus,
+      filters.page,
+      filters.pageSize,
+      filters.sortBy,
+      filters.sortDirection,
+  ]);
 
-  const updateFilters = (patch: Partial<TicketFilters>) =>
-    setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));
+  const updateFilters = (patch: Partial<TicketFilters>) =>{
+  if (Object.keys(patch).some((key) => key !== 'search')) {
+    shouldFetchImmediately.current = true;
+  }
 
-  const resetFilters = () => setFilters(emptyFilters);
+  setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));
+};
+  const resetFilters = () => {
+  shouldFetchImmediately.current = true;
+  setFilters(emptyFilters);
+};
 
   return { filters, updateFilters, resetFilters, reload: load, ...state };
 }

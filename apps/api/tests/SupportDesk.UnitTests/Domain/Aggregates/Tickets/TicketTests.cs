@@ -99,4 +99,56 @@ public class TicketTests
         Assert.Null(ticket.AssignedAgentId);
         Assert.Equal(Later, ticket.UpdatedAtUtc);
     }
+
+    [Fact]
+    public void Escalate_RaisesPriorityAndStartsNewSlaWindow()
+    {
+        var ticket = new TicketBuilder()
+            .WithPriority(TicketPriority.Medium)
+            .WithSlaWindow(FixedClock.DefaultNow, FixedClock.DefaultNow.AddHours(24))
+            .Build();
+
+        var newDue = Later.AddHours(8);
+        ticket.Escalate(TicketPriority.High, Later, newDue);
+
+        Assert.Equal(TicketPriority.High, ticket.Priority);
+        Assert.Equal(Later, ticket.SlaStartedAtUtc);
+        Assert.Equal(newDue, ticket.DueAtUtc);
+        Assert.Equal(Later, ticket.UpdatedAtUtc);
+    }
+
+    [Fact]
+    public void Escalate_WhenAlreadyCritical_Throws()
+    {
+        var ticket = new TicketBuilder()
+            .WithPriority(TicketPriority.Critical)
+            .Build();
+
+        var exception = Assert.Throws<BusinessRuleViolationException>(
+            () => ticket.Escalate(
+                TicketPriority.Critical,
+                Later,
+                Later.AddHours(4)));
+
+        Assert.Contains("Critical", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(TicketStatus.Resolved)]
+    [InlineData(TicketStatus.Closed)]
+    public void Escalate_WhenTerminal_Throws(TicketStatus status)
+    {
+        var ticket = new TicketBuilder()
+            .WithPriority(TicketPriority.Medium)
+            .WithStatus(status)
+            .Build();
+
+        var exception = Assert.Throws<BusinessRuleViolationException>(
+            () => ticket.Escalate(
+                TicketPriority.High,
+                Later,
+                Later.AddHours(8)));
+
+        Assert.Contains(status.ToString(), exception.Message);
+    }
 }

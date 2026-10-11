@@ -1,15 +1,54 @@
+
 namespace SupportDesk.Domain.Aggregates.Tickets;
 
 /// <summary>
-/// Works out where a ticket stands against its due date. SLA status is always derived from
-/// the ticket's dates and the current time - never stored.
+/// Calculates SLA status from the ticket's dates and the current time.
+/// SLA status is calculated when needed, not stored.
 /// </summary>
 public static class SlaEvaluator
 {
-    public static SlaStatus Evaluate(DateTime? dueAtUtc, DateTime? resolvedAtUtc, DateTime nowUtc) =>
-        dueAtUtc is null ? SlaStatus.NotApplicable
-        : resolvedAtUtc is not null
-            ? (resolvedAtUtc <= dueAtUtc ? SlaStatus.Met : SlaStatus.Breached)
-        : nowUtc > dueAtUtc ? SlaStatus.Breached
-        : SlaStatus.WithinSla;
+    public static SlaStatus Evaluate(
+        DateTime? slaStartedAtUtc,
+        DateTime? dueAtUtc,
+        DateTime? resolvedAtUtc,
+        DateTime nowUtc,
+        double atRiskThresholdPercent)
+    {
+        if (dueAtUtc is null)
+        {
+            return SlaStatus.NotApplicable;
+        }
+
+        if (resolvedAtUtc is not null)
+        {
+            return resolvedAtUtc <= dueAtUtc
+                ? SlaStatus.Met
+                : SlaStatus.Breached;
+        }
+
+        if (nowUtc > dueAtUtc)
+        {
+            return SlaStatus.Breached;
+        }
+
+        // Without a start time, we cannot calculate the remaining percentage.
+        if (slaStartedAtUtc is null)
+        {
+            return SlaStatus.WithinSla;
+        }
+
+        var totalWindow = (dueAtUtc.Value - slaStartedAtUtc.Value).TotalSeconds;
+
+        if (totalWindow <= 0)
+        {
+            return SlaStatus.Breached;
+        }
+
+        var remainingWindow = (dueAtUtc.Value - nowUtc).TotalSeconds;
+        var remainingPercent = remainingWindow / totalWindow * 100;
+
+        return remainingPercent <= atRiskThresholdPercent
+            ? SlaStatus.AtRisk
+            : SlaStatus.WithinSla;
+    }
 }

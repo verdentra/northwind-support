@@ -1,3 +1,4 @@
+
 using SupportDesk.Domain.Common;
 using SupportDesk.Domain.Exceptions;
 
@@ -39,6 +40,9 @@ public sealed class Ticket : AggregateRoot
     public DateTime CreatedAtUtc { get; private set; }
 
     public DateTime UpdatedAtUtc { get; private set; }
+
+    /// <summary>When the current SLA countdown started.</summary>
+    public DateTime? SlaStartedAtUtc { get; private set; }
 
     /// <summary>When the team has committed to responding by. Null when no SLA applies.</summary>
     public DateTime? DueAtUtc { get; private set; }
@@ -110,5 +114,60 @@ public sealed class Ticket : AggregateRoot
     {
         AssignedAgentId = agentId;
         UpdatedAtUtc = nowUtc;
+    }
+
+    /// <summary>Sets the start and deadline of the current SLA window.</summary>
+    public void SetSlaWindow(DateTime startedAtUtc, DateTime dueAtUtc)
+    {
+        if (dueAtUtc < startedAtUtc)
+        {
+            throw new ArgumentException("The SLA deadline cannot be before its start time.");
+        }
+
+        SlaStartedAtUtc = startedAtUtc;
+        DueAtUtc = dueAtUtc;
+        UpdatedAtUtc = startedAtUtc;
+    }
+
+    /// <summary>
+    /// Escalates the ticket by exactly one priority level and starts a new SLA window.
+    /// Assignment and escalation history are handled by the application layer.
+    /// </summary>
+    /// <exception cref="BusinessRuleViolationException">
+    /// The ticket cannot be escalated or the priority increase is invalid.
+    /// </exception>
+    public void Escalate(
+        TicketPriority newPriority,
+        DateTime escalatedAtUtc,
+        DateTime newDueAtUtc)
+    {
+        if (Priority == TicketPriority.Critical)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is already Critical and cannot be escalated.");
+        }
+
+        if (Status is TicketStatus.Resolved or TicketStatus.Closed)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is {Status} and cannot be escalated.");
+        }
+
+        if (newPriority != (TicketPriority)((int)Priority + 1))
+        {
+            throw new BusinessRuleViolationException(
+                "Escalation must increase priority by exactly one level.");
+        }
+
+        if (newDueAtUtc < escalatedAtUtc)
+        {
+            throw new ArgumentException(
+                "The new SLA deadline cannot be before the escalation time.");
+        }
+
+        Priority = newPriority;
+        SlaStartedAtUtc = escalatedAtUtc;
+        DueAtUtc = newDueAtUtc;
+        UpdatedAtUtc = escalatedAtUtc;
     }
 }

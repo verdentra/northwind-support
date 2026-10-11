@@ -43,12 +43,32 @@ export function AssignAgentControl({ ticket, agents, onUpdated }: AssignAgentCon
             }
           >
             <option value="">Unassigned</option>
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id} disabled={!agent.isActive}>
-                {agent.fullName} ({agent.openTicketCount}/{agent.maxOpenTickets} open)
-                {agent.isActive ? '' : ' - inactive'}
-              </option>
-            ))}
+            {agents.map((agent) => {
+              const hasSpecialization = agent.specializations.some(
+                (specialization) => specialization.id === ticket.category.id,
+              );
+              const isAlreadyAssigned = ticket.assignedAgent?.id === agent.id;
+              const isAtCapacity = agent.openTicketCount >= agent.maxOpenTickets;
+              const isSpecialistRequired = ticket.category.requiresSpecialist;
+              const isDisabled =
+                !agent.isActive ||
+                (isSpecialistRequired && !hasSpecialization) ||
+                (isAtCapacity && !isAlreadyAssigned);
+              const unavailableReason = !agent.isActive
+                ? ' - inactive'
+                : isSpecialistRequired && !hasSpecialization
+                  ? ` - not qualified for ${ticket.category.name}`
+                  : isAtCapacity && !isAlreadyAssigned
+                    ? ' - at capacity'
+                    : '';
+
+              return (
+                <option key={agent.id} value={agent.id} disabled={isDisabled}>
+                  {agent.fullName} ({agent.openTicketCount}/{agent.maxOpenTickets} open)
+                  {unavailableReason}
+                </option>
+              );
+            })}
           </select>
         )}
       </Field>

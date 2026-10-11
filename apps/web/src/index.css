@@ -76,6 +76,15 @@ a {
   font-weight: 600;
 }
 
+.app__account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  color: var(--colour-muted);
+  font-size: 0.9rem;
+}
+
 .app__main {
   max-width: 1200px;
   margin: 0 auto;
@@ -430,6 +439,28 @@ textarea[aria-invalid='true'] {
 
 .form .field {
   max-width: 640px;
+}
+
+.login-page {
+  display: grid;
+  min-height: calc(100vh - 120px);
+  place-items: center;
+}
+
+.login-form {
+  width: min(100%, 420px);
+}
+
+.login-form h1 {
+  margin-bottom: 4px;
+}
+
+.login-form .page-header__subtitle {
+  margin-bottom: var(--gap);
+}
+
+.login-form .button {
+  align-self: flex-start;
 }
 
 .visually-hidden {

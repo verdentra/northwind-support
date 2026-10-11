@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 import { ticketListItem } from '../../../test/fixtures';
@@ -31,5 +31,28 @@ describe('TicketTable', () => {
     // An unassigned ticket says so, rather than showing an empty cell.
     expect(screen.getByText('Unassigned')).toBeInTheDocument();
     expect(screen.getByText('Within SLA')).toBeInTheDocument();
+  });
+
+  it('renders all SLA states with distinct text labels', () => {
+    render(
+      <MemoryRouter>
+        <TicketTable
+          tickets={[
+            ticketListItem({ slaStatus: 'WithinSla' }),
+            ticketListItem({ id: 13, slaStatus: 'AtRisk' }),
+            ticketListItem({ id: 14, slaStatus: 'Breached' }),
+            ticketListItem({ id: 15, slaStatus: 'Met' }),
+            ticketListItem({ id: 16, slaStatus: 'NotApplicable', dueAtUtc: null }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    const table = screen.getByRole('table');
+    const expectedLabels = ['Within SLA', 'At risk', 'Breached', 'Met', 'No SLA'];
+
+    for (const label of expectedLabels) {
+      expect(within(table).getByText(label)).toBeInTheDocument();
+    }
   });
 });

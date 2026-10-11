@@ -1,8 +1,14 @@
+import { useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ticketsApi } from '../../api/tickets';
 import { ErrorMessage } from '../../components/ErrorMessage';
 import { Spinner } from '../../components/Spinner';
+import { useAsyncData } from '../../hooks/useAsyncData';
 import { useReferenceData } from '../../hooks/useReferenceData';
+import type { TicketDetail, TicketEscalation } from '../../types/api';
 import { AssignAgentControl } from './components/AssignAgentControl';
+import { EscalateTicketControl } from './components/EscalateTicketControl';
+import { EscalationHistory } from './components/EscalationHistory';
 import { StatusActions } from './components/StatusActions';
 import { TicketSummary } from './components/TicketSummary';
 import { useTicket } from './hooks/useTicket';
@@ -13,6 +19,22 @@ export function TicketDetailPage() {
 
   const { data: ticket, isLoading, error, reload, setData } = useTicket(ticketId);
   const reference = useReferenceData();
+  const loadEscalations = useCallback(
+    () => ticketsApi.getEscalations(ticketId),
+    [ticketId],
+  );
+  const {
+    data: escalations,
+    isLoading: isLoadingEscalations,
+    error: escalationError,
+    reload: reloadEscalations,
+    setData: setEscalations,
+  } = useAsyncData(loadEscalations, 'Unable to load escalation history.');
+
+  const handleEscalated = (updatedTicket: TicketDetail, escalation: TicketEscalation) => {
+    setData(updatedTicket);
+    setEscalations([escalation, ...(escalations ?? [])]);
+  };
 
   if (Number.isNaN(ticketId)) {
     return <ErrorMessage message="That is not a valid ticket reference." />;
@@ -60,6 +82,16 @@ export function TicketDetailPage() {
             ticket={ticket}
             agents={reference.data?.agents ?? []}
             onUpdated={setData}
+          />
+
+          <EscalateTicketControl ticket={ticket} onEscalated={handleEscalated} />
+
+          <EscalationHistory
+            escalations={escalations ?? []}
+            agents={reference.data?.agents ?? []}
+            isLoading={isLoadingEscalations}
+            error={escalationError}
+            onRetry={() => void reloadEscalations()}
           />
         </aside>
       </div>

@@ -1,11 +1,15 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Application.Contracts.Tickets;
 using SupportDesk.Application.Features.Tickets.Commands.AssignTicket;
 using SupportDesk.Application.Features.Tickets.Commands.ChangeTicketStatus;
+using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
 using SupportDesk.Application.Features.Tickets.Commands.RaiseTicket;
 using SupportDesk.Application.Features.Tickets.Queries.GetTicket;
+using SupportDesk.Application.Features.Tickets.Triage;
 using SupportDesk.Domain.Aggregates.Agents;
+using SupportDesk.Domain.Aggregates.Categories;
 using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
 using SupportDesk.Domain.Repositories;
@@ -21,43 +25,122 @@ internal sealed class TicketCommandTestContext
 {
     public TicketCommandTestContext()
     {
-        Customers.Setup(c => c.ExistsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        Customers.Setup(c => c.ExistsAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        Categories.Setup(c => c.ExistsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        Customers.Setup(c => c.GetByIdAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Customer(
+                "Contoso Ltd",
+                "support@contoso.example",
+                null,
+                CustomerTier.Premium,
+                Clock.UtcNow));
+
+        Categories.Setup(c => c.ExistsAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+
+        Categories.Setup(c => c.GetByIdAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Category("General", false, false));
+
+        Agents.Setup(a => a.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<Agent>)Array.Empty<Agent>());
 
         Tickets.Setup(t => t.NextReferenceAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("TCK-0041");
 
-        Tickets.Setup(t => t.AddAsync(It.IsAny<Ticket>(), It.IsAny<CancellationToken>()))
+        Tickets.Setup(t => t.AddAsync(
+                It.IsAny<Ticket>(), It.IsAny<CancellationToken>()))
             .Callback<Ticket, CancellationToken>((ticket, _) => AddedTicket = ticket)
             .Returns(Task.CompletedTask);
 
+        Escalations.Setup(e => e.AddAsync(
+                It.IsAny<TicketEscalation>(), It.IsAny<CancellationToken>()))
+            .Callback<TicketEscalation, CancellationToken>(
+                (escalation, _) => AddedEscalation = escalation)
+            .Returns(Task.CompletedTask);
+
         // Every command returns the ticket as re-read once its change has been saved.
-        TicketQueries.Setup(q => q.GetDetailAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        TicketQueries.Setup(q => q.GetDetailAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TicketDetailDto
             {
                 Id = 41,
                 Reference = "TCK-0041",
-                Customer = new CustomerContactDto(1, "Contoso Ltd", "support@contoso.example", null, CustomerTier.Premium),
+                Customer = new CustomerContactDto(
+                    1,
+                    "Contoso Ltd",
+                    "support@contoso.example",
+                    null,
+                    CustomerTier.Premium),
                 Category = new CategoryDto(1, "General", false)
             });
 
         var getTicket = new GetTicketQueryHandler(TicketQueries.Object);
 
+        var slaOptions = Options.Create(DefaultSlaOptions());
+
+        Triage = new TicketTriageService(
+            Tickets.Object,
+            Agents.Object,
+            slaOptions);
+
         RaiseTicket = new RaiseTicketCommandHandler(
-            Tickets.Object, Customers.Object, Categories.Object, UnitOfWork.Object, Clock, getTicket,
+            Tickets.Object,
+            Customers.Object,
+            Categories.Object,
+            UnitOfWork.Object,
+            Clock,
+            Triage,
+            getTicket,
             NullLogger<RaiseTicketCommandHandler>.Instance);
 
-        ChangeTicketStatus = new ChangeTicketStatusCommandHandler(Tickets.Object, UnitOfWork.Object, Clock, getTicket);
+        EscalateTicket = new EscalateTicketCommandHandler(
+            Tickets.Object,
+            Escalations.Object,
+            Customers.Object,
+            Categories.Object,
+            UnitOfWork.Object,
+            Clock,
+            Triage,
+            getTicket,
+            NullLogger<EscalateTicketCommandHandler>.Instance);
+
+        ChangeTicketStatus = new ChangeTicketStatusCommandHandler(
+            Tickets.Object,
+            UnitOfWork.Object,
+            Clock,
+            getTicket);
 
         AssignTicket = new AssignTicketCommandHandler(
-            Tickets.Object, Agents.Object, UnitOfWork.Object, Clock, getTicket,
+            Tickets.Object,
+            Agents.Object,
+            UnitOfWork.Object,
+            Clock,
+            getTicket,
             NullLogger<AssignTicketCommandHandler>.Instance);
     }
 
+    public static SlaOptions DefaultSlaOptions() => new()
+    {
+        BaseWindowHours = new Dictionary<string, int>
+        {
+            ["Low"] = 72,
+            ["Medium"] = 24,
+            ["High"] = 8,
+            ["Critical"] = 4
+        },
+        PremiumCustomerMultiplier = 0.5,
+        MinimumWindowHours = 1,
+        AtRiskThresholdPercent = 25
+    };
+
     public Mock<ITicketRepository> Tickets { get; } = new();
+
+    public Mock<ITicketEscalationRepository> Escalations { get; } = new();
 
     public Mock<ICustomerRepository> Customers { get; } = new();
 
@@ -71,7 +154,11 @@ internal sealed class TicketCommandTestContext
 
     public FixedClock Clock { get; } = new();
 
+    public TicketTriageService Triage { get; }
+
     public RaiseTicketCommandHandler RaiseTicket { get; }
+
+    public EscalateTicketCommandHandler EscalateTicket { get; }
 
     public ChangeTicketStatusCommandHandler ChangeTicketStatus { get; }
 
@@ -80,27 +167,44 @@ internal sealed class TicketCommandTestContext
     /// <summary>The ticket handed to the repository by the last create call.</summary>
     public Ticket? AddedTicket { get; private set; }
 
+    /// <summary>The escalation handed to the repository by the last escalate call.</summary>
+    public TicketEscalation? AddedEscalation { get; private set; }
+
     /// <summary>Makes <see cref="ITicketRepository.GetByIdAsync"/> return this ticket.</summary>
     public Ticket ExistingTicket(Ticket ticket)
     {
-        Tickets.Setup(t => t.GetByIdAsync(ticket.Id, It.IsAny<CancellationToken>()))
+        Tickets.Setup(t => t.GetByIdAsync(
+                ticket.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(ticket);
 
         return ticket;
     }
 
-    public void ExistingAgent(int id, string fullName = "Alex Turner", bool isActive = true)
+    public void ExistingAgent(
+        int id,
+        string fullName = "Alex Turner",
+        bool isActive = true)
     {
-        var agent = new Agent(fullName, $"agent{id}@example.com", maxOpenTickets: 10, Clock.UtcNow);
+        var agent = new Agent(
+            fullName,
+            $"agent{id}@example.com",
+            maxOpenTickets: 10,
+            Clock.UtcNow);
+
+        EntityId.WithId(agent, id);
 
         if (!isActive)
         {
             agent.Deactivate();
         }
 
-        Agents.Setup(a => a.GetByIdAsync(id, It.IsAny<CancellationToken>())).ReturnsAsync(agent);
+        Agents.Setup(a => a.GetByIdAsync(
+                id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(agent);
     }
 
     public void VerifySaved(Times times) =>
-        UnitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), times);
+        UnitOfWork.Verify(
+            u => u.SaveChangesAsync(It.IsAny<CancellationToken>()),
+            times);
 }

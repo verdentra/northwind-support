@@ -1,24 +1,29 @@
+
 using Microsoft.EntityFrameworkCore;
 using SupportDesk.Domain.Repositories;
 
 namespace SupportDesk.Infrastructure.Data;
 
 /// <summary>
-/// EF Core context for the support desk, and the unit of work that commits each request's
-/// changes. Mapping lives in the per-aggregate configuration classes in
-/// <c>Data/Configurations</c>.
+/// EF Core context for the support desk and unit of work.
 /// </summary>
-public class SupportDbContext(DbContextOptions<SupportDbContext> options) : DbContext(options), IUnitOfWork
+public class SupportDbContext(
+    DbContextOptions<SupportDbContext> options)
+    : DbContext(options), IUnitOfWork
 {
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(SupportDbContext).Assembly);
+        modelBuilder.ApplyConfigurationsFromAssembly(
+            typeof(SupportDbContext).Assembly);
     }
 
-    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    protected override void ConfigureConventions(
+        ModelConfigurationBuilder configurationBuilder)
     {
-        // Every timestamp in this database is UTC; say so, so that it survives the round trip.
-        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
-        configurationBuilder.Properties<DateTime?>().HaveConversion<NullableUtcDateTimeConverter>();
+        configurationBuilder.Properties<DateTime>()
+            .HaveConversion<UtcDateTimeConverter>();
+
+        configurationBuilder.Properties<DateTime?>()
+            .HaveConversion<NullableUtcDateTimeConverter>();
     }
 }

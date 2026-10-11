@@ -6,11 +6,21 @@ import { CustomerListPage } from './features/customers/CustomerListPage';
 import { CreateTicketPage } from './features/tickets/CreateTicketPage';
 import { TicketDetailPage } from './features/tickets/TicketDetailPage';
 import { TicketListPage } from './features/tickets/TicketListPage';
+import { LoginPage } from './features/auth/LoginPage';
+import { RequireAuth } from './auth/RequireAuth';
 
 export const router = createBrowserRouter([
   {
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
     path: '/',
-    element: <App />,
+    element: (
+      <RequireAuth>
+        <App />
+      </RequireAuth>
+    ),
     children: [
       { index: true, element: <Navigate to="/tickets" replace /> },
       { path: 'tickets', element: <TicketListPage /> },

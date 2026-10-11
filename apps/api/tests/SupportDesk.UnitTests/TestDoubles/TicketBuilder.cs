@@ -9,15 +9,38 @@ namespace SupportDesk.UnitTests.TestDoubles;
 /// </summary>
 public sealed class TicketBuilder
 {
+    private int _id;
     private string _reference = "TCK-0001";
+    private int _customerId = 1;
+    private int _categoryId = 1;
     private TicketPriority _priority = TicketPriority.Medium;
     private TicketStatus _status = TicketStatus.New;
     private int? _assignedAgentId;
     private DateTime? _resolvedAtUtc;
+    private DateTime? _slaStartedAtUtc;
+    private DateTime? _dueAtUtc;
+
+    public TicketBuilder WithId(int id)
+    {
+        _id = id;
+        return this;
+    }
 
     public TicketBuilder WithReference(string reference)
     {
         _reference = reference;
+        return this;
+    }
+
+    public TicketBuilder WithCustomerId(int customerId)
+    {
+        _customerId = customerId;
+        return this;
+    }
+
+    public TicketBuilder WithCategoryId(int categoryId)
+    {
+        _categoryId = categoryId;
         return this;
     }
 
@@ -46,16 +69,33 @@ public sealed class TicketBuilder
         return this;
     }
 
+    public TicketBuilder WithSlaWindow(DateTime startedAtUtc, DateTime dueAtUtc)
+    {
+        _slaStartedAtUtc = startedAtUtc;
+        _dueAtUtc = dueAtUtc;
+        return this;
+    }
+
     public Ticket Build()
     {
         var ticket = Ticket.Raise(
             _reference,
             "Something is not working",
             "A description long enough to be realistic.",
-            customerId: 1,
-            categoryId: 1,
+            _customerId,
+            _categoryId,
             _priority,
             FixedClock.DefaultNow);
+
+        if (_id > 0)
+        {
+            EntityId.WithId(ticket, _id);
+        }
+
+        if (_slaStartedAtUtc is not null && _dueAtUtc is not null)
+        {
+            ticket.SetSlaWindow(_slaStartedAtUtc.Value, _dueAtUtc.Value);
+        }
 
         if (_assignedAgentId is not null)
         {

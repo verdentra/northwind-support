@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Aggregates.Agents;
@@ -17,13 +18,20 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    IPasswordHasher<Agent> passwordHasher,
+    ILogger<SupportDbSeeder> logger)
 {
+    private const string DevelopmentPassword = "LocalDev123!";
+
     /// <summary>Seeds the database, unless it already has tickets in it.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
+            await EnsureDevelopmentCredentialsAsync(ct);
             logger.LogInformation("Seed data already present; skipping.");
             return;
         }
@@ -34,6 +42,7 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         var customers = SeedCustomers(now);
         var agents = SeedAgents(now);
 
+        SetDevelopmentCredentials(agents);
         db.AddRange(categories);
         db.AddRange(customers);
         db.AddRange(agents);
@@ -48,6 +57,31 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         logger.LogInformation(
             "Seeded {Categories} categories, {Customers} customers, {Agents} agents and {Tickets} tickets.",
             categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
+    }
+
+    private async Task EnsureDevelopmentCredentialsAsync(CancellationToken ct)
+    {
+        var agents = await db.Set<Agent>().ToListAsync(ct);
+        var changed = false;
+
+        foreach (var agent in agents.Where(agent => agent.PasswordHash is null))
+        {
+            agent.SetPasswordHash(passwordHasher.HashPassword(agent, DevelopmentPassword));
+            changed = true;
+        }
+
+        if (changed)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    private void SetDevelopmentCredentials(IEnumerable<Agent> agents)
+    {
+        foreach (var agent in agents)
+        {
+            agent.SetPasswordHash(passwordHasher.HashPassword(agent, DevelopmentPassword));
+        }
     }
 
     private static List<Category> SeedCategories() =>

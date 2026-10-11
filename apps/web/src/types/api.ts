@@ -64,6 +64,13 @@ export interface TicketListItem {
   slaStatus: SlaStatus;
 }
 
+/** Explains the automatic triage decisions made when the ticket was raised. */
+export interface TicketTriage {
+  priorityReason: string;
+  slaWindowReason: string;
+  assignmentReason: string;
+}
+
 export interface TicketDetail {
   id: number;
   reference: string;
@@ -79,6 +86,31 @@ export interface TicketDetail {
   dueAtUtc: string | null;
   resolvedAtUtc: string | null;
   slaStatus: SlaStatus;
+  triage?: TicketTriage;
+}
+
+/** Immutable row from POST /tickets/{id}/escalate and GET .../escalations. */
+export interface TicketEscalation {
+  id: number;
+  ticketId: number;
+  fromPriority: TicketPriority;
+  toPriority: TicketPriority;
+  fromAgentId: number | null;
+  toAgentId: number | null;
+  fromDueAtUtc: string | null;
+  toDueAtUtc: string | null;
+  reason: string;
+  escalatedBy: string;
+  escalatedAtUtc: string;
+}
+
+export interface EscalateTicketPayload {
+  reason: string;
+}
+
+export interface EscalateTicketResult {
+  ticket: TicketDetail;
+  escalation: TicketEscalation;
 }
 
 /** Everything the ticket list screen can narrow the results by. */
@@ -90,6 +122,7 @@ export interface TicketFilters {
   customerId?: number;
   assignedAgentId?: number;
   unassignedOnly?: boolean;
+  slaStatus?: SlaStatus;
   page: number;
   pageSize: number;
   sortBy: TicketSortField;
