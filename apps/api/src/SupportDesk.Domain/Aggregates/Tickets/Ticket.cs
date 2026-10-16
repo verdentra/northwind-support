@@ -49,8 +49,7 @@ public sealed class Ticket : AggregateRoot
     public bool IsOpen => Status is not (TicketStatus.Resolved or TicketStatus.Closed);
 
     /// <summary>
-    /// Raises a new ticket for a customer. It starts as <see cref="TicketStatus.New"/>, with no
-    /// owner and no due date.
+    /// Raises a new ticket for a customer. Triage may provide the applied due date and owner.
     /// </summary>
     public static Ticket Raise(
         string reference,
@@ -59,7 +58,9 @@ public sealed class Ticket : AggregateRoot
         int customerId,
         int categoryId,
         TicketPriority priority,
-        DateTime nowUtc)
+        DateTime nowUtc,
+        DateTime? dueAtUtc = null,
+        int? assignedAgentId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reference);
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
@@ -75,7 +76,9 @@ public sealed class Ticket : AggregateRoot
             Priority = priority,
             Status = TicketStatus.New,
             CreatedAtUtc = nowUtc,
-            UpdatedAtUtc = nowUtc
+            UpdatedAtUtc = nowUtc,
+            DueAtUtc = dueAtUtc,
+            AssignedAgentId = assignedAgentId
         };
     }
 
@@ -109,6 +112,30 @@ public sealed class Ticket : AggregateRoot
     public void AssignTo(int? agentId, DateTime nowUtc)
     {
         AssignedAgentId = agentId;
+        UpdatedAtUtc = nowUtc;
+    }
+
+    public void Escalate(
+        TicketPriority priority,
+        DateTime dueAtUtc,
+        int? assignedAgentId,
+        DateTime nowUtc)
+    {
+        if (Status is TicketStatus.Resolved or TicketStatus.Closed)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is {Status} and cannot be escalated.");
+        }
+
+        if (priority != Priority + 1)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} must escalate exactly one priority level.");
+        }
+
+        Priority = priority;
+        DueAtUtc = dueAtUtc;
+        AssignedAgentId = assignedAgentId;
         UpdatedAtUtc = nowUtc;
     }
 }
