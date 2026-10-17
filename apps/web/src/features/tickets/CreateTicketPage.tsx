@@ -33,6 +33,35 @@ export function CreateTicketPage() {
           <p>
             Raised <strong>{created.reference}</strong> for {created.customer.name}.
           </p>
+
+          {created.triage && (
+            <div>
+              <h2>Triage result</h2>
+
+              <p>
+                Priority: <strong>{created.triage.appliedPriority}</strong>
+              </p>
+              <p>{created.triage.priorityReason}</p>
+
+              <p>
+                SLA window: <strong>{created.triage.slaWindowHours} hours</strong>
+              </p>
+              <p>{created.triage.slaReason}</p>
+
+              <p>
+                Assigned agent:{' '}
+                <strong>{created.assignedAgent?.fullName ?? 'Unassigned'}</strong>
+              </p>
+              <p>{created.triage.assignmentReason}</p>
+
+              <p>
+                Due:{' '}
+                {created.dueAtUtc
+                  ? new Date(created.dueAtUtc).toLocaleString()
+                  : 'No SLA'}
+              </p>
+            </div>
+          )}
           <div className="button-row">
             <button
               type="button"

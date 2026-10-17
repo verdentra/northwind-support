@@ -33,6 +33,10 @@ public sealed class TicketDetailDto
 
     public DateTime? ResolvedAtUtc { get; set; }
 
-    /// <summary>Derived from the dates above; never stored.</summary>
+    /// <summary>
+    /// Derived from the dates above; never stored.
+    /// </summary>
     public SlaStatus SlaStatus { get; set; }
+
+    public TicketTriageDto? Triage { get; set; }
 }

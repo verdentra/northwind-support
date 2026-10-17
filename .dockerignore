@@ -1,0 +1,11 @@
+.git/
+**/bin/
+**/obj/
+node_modules/
+apps/web/
+.env
+.env.*
+!.env.example
+.vs/
+.vscode/
+*.log

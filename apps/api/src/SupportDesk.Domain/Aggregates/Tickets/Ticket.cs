@@ -43,6 +43,17 @@ public sealed class Ticket : AggregateRoot
     /// <summary>When the team has committed to responding by. Null when no SLA applies.</summary>
     public DateTime? DueAtUtc { get; private set; }
 
+    /// <summary>
+    /// Start of the current SLA calculation window.
+    /// The SLA status itself remains derived and is not stored.
+    /// </summary>
+    public DateTime? SlaWindowStartedAtUtc { get; private set; }
+
+    /// <summary>
+    /// Length of the current SLA window in hours.
+    /// </summary>
+    public double? SlaWindowHours { get; private set; }
+
     public DateTime? ResolvedAtUtc { get; private set; }
 
     /// <summary>True while the ticket still needs work from an agent.</summary>
@@ -77,6 +88,25 @@ public sealed class Ticket : AggregateRoot
             CreatedAtUtc = nowUtc,
             UpdatedAtUtc = nowUtc
         };
+    }
+
+    /// <summary>
+    /// Applies the priority, SLA deadline, and agent selected during ticket triage.
+    /// </summary>
+    public void ApplyTriage(
+        TicketPriority priority,
+        DateTime dueAtUtc,
+        int? assignedAgentId,
+        DateTime? slaWindowStartedAtUtc,
+        double? slaWindowHours,
+        DateTime nowUtc)
+    {
+        Priority = priority;
+        DueAtUtc = dueAtUtc;
+        SlaWindowStartedAtUtc = slaWindowStartedAtUtc;
+        SlaWindowHours = slaWindowHours;
+        AssignedAgentId = assignedAgentId;
+        UpdatedAtUtc = nowUtc;
     }
 
     /// <summary>

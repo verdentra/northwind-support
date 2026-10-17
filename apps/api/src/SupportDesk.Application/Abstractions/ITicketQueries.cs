@@ -1,4 +1,5 @@
 using SupportDesk.Application.Contracts.Common;
+using SupportDesk.Application.Contracts.Reports;
 using SupportDesk.Application.Contracts.Tickets;
 
 namespace SupportDesk.Application.Abstractions;
@@ -11,6 +12,10 @@ public interface ITicketQueries
     /// <param name="query">Filters, sorting and paging, already normalized.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<PagedResult<TicketListItemDto>> GetPagedAsync(TicketQuery query, CancellationToken ct);
+
+    Task<IReadOnlyList<SlaSummaryDto>> GetSlaSummaryAsync(
+        SlaSummaryQuery query,
+        CancellationToken cancellationToken);
 
     Task<TicketDetailDto?> GetDetailAsync(int id, CancellationToken ct);
 

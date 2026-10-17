@@ -42,12 +42,17 @@ public class RaiseTicketCommandHandlerTests
     public async Task HandleAsync_WhenCustomerDoesNotExist_Throws()
     {
         var context = new TicketCommandTestContext();
+
         context.Customers
-            .Setup(c => c.ExistsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
+            .Setup(c => c.GetByIdAsync(
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SupportDesk.Domain.Aggregates.Customers.Customer?)null);
 
         var exception = await Assert.ThrowsAsync<NotFoundException>(
-            () => context.RaiseTicket.HandleAsync(Request(), CancellationToken.None));
+            () => context.RaiseTicket.HandleAsync(
+                Request(),
+                CancellationToken.None));
 
         Assert.Contains("Customer", exception.Message);
         context.VerifySaved(Times.Never());

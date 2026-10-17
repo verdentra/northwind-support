@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
 import { ticketsApi } from '../../../api/tickets';
 import type { PagedResult, TicketFilters, TicketListItem } from '../../../types/api';
 
-const DEBOUNCE_MS = 300;
+const SEARCH_DEBOUNCE_MS = 500;
 
 export const emptyFilters: TicketFilters = {
   search: '',
   status: undefined,
   priority: undefined,
+  slaStatus: undefined,
   categoryId: undefined,
   customerId: undefined,
   assignedAgentId: undefined,
@@ -42,12 +43,43 @@ export function useTicketList() {
     }
   };
 
-  useEffect(() => {
-    const handle = window.setTimeout(load, DEBOUNCE_MS);
+const previousFilters = useRef<TicketFilters | null>(null);
 
-    return () => window.clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- filters object identity changes every render
-  }, [filters.search, filters.page, filters.pageSize]);
+  useEffect(() => {
+    const previous = previousFilters.current;
+    previousFilters.current = filters;
+
+    const changedKeys = previous
+      ? (Object.keys(filters) as (keyof TicketFilters)[]).filter(
+          (key) => filters[key] !== previous[key],
+        )
+      : [];
+
+    const searchChanged = changedKeys.includes('search');
+
+    const onlySearchChanged =
+      searchChanged &&
+      changedKeys.every(
+        (key) => key === 'search' || (key === 'page' && filters.page === 1),
+      );
+
+    let handle: number | undefined;
+
+    if (previous === null || changedKeys.length === 0 || onlySearchChanged) {
+      handle = window.setTimeout(() => {
+        void load();
+      }, SEARCH_DEBOUNCE_MS);
+    } else if (changedKeys.length > 0) {
+      void load();
+    }
+
+    return () => {
+      if (handle !== undefined) {
+        window.clearTimeout(handle);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
 
   const updateFilters = (patch: Partial<TicketFilters>) =>
     setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Aggregates.Agents;
@@ -17,14 +18,22 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    IPasswordHasher<Agent> passwordHasher,
+    ILogger<SupportDbSeeder> logger)
 {
-    /// <summary>Seeds the database, unless it already has tickets in it.</summary>
+    // Development fixture only: alex.turner@northwind-support.example / DevOnly-Password1!
+    private const string DevelopmentPassword = "DevOnly-Password1!";
+
+    /// <summary>Seeds demo data, or fills only missing development password hashes.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
-            logger.LogInformation("Seed data already present; skipping.");
+            await EnsureMissingPasswordHashesAsync(ct);
+            logger.LogInformation("Seed data already present; checked agent password hashes.");
             return;
         }
 
@@ -33,6 +42,8 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         var categories = SeedCategories();
         var customers = SeedCustomers(now);
         var agents = SeedAgents(now);
+
+        SetMissingPasswordHashes(agents);
 
         db.AddRange(categories);
         db.AddRange(customers);
@@ -48,6 +59,33 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         logger.LogInformation(
             "Seeded {Categories} categories, {Customers} customers, {Agents} agents and {Tickets} tickets.",
             categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
+    }
+
+    private async Task EnsureMissingPasswordHashesAsync(CancellationToken ct)
+    {
+        var agents = await db.Set<Agent>()
+            .Where(agent => agent.PasswordHash == null || agent.PasswordHash == string.Empty)
+            .ToListAsync(ct);
+
+        if (agents.Count == 0)
+        {
+            return;
+        }
+
+        SetMissingPasswordHashes(agents);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Added development password hashes to {AgentCount} agents without one.", agents.Count);
+    }
+
+    private void SetMissingPasswordHashes(IEnumerable<Agent> agents)
+    {
+        foreach (var agent in agents)
+        {
+            if (string.IsNullOrWhiteSpace(agent.PasswordHash))
+            {
+                agent.SetPasswordHash(passwordHasher.HashPassword(agent, DevelopmentPassword));
+            }
+        }
     }
 
     private static List<Category> SeedCategories() =>

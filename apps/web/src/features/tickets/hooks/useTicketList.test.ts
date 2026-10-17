@@ -27,7 +27,7 @@ describe('useTicketList', () => {
     const { result } = renderHook(() => useTicketList());
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(500);
     });
 
     expect(getTickets).toHaveBeenCalledTimes(1);
@@ -36,11 +36,11 @@ describe('useTicketList', () => {
       result.current.updateFilters({ search: 'invoice' });
     });
 
-    // Still inside the debounce window: no second request yet.
+    // No request until the search debounce finishes.
     expect(getTickets).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(500);
     });
 
     expect(getTickets).toHaveBeenCalledTimes(2);
@@ -50,5 +50,48 @@ describe('useTicketList', () => {
 
     expect(result.current.isLoading).toBe(false);
     expect(result.current.data?.items).toHaveLength(1);
+  });
+
+  it('fetches immediately when the status filter changes', async () => {
+    const { result } = renderHook(() => useTicketList());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(getTickets).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      result.current.updateFilters({ status: 'InProgress' });
+    });
+    expect(getTickets).toHaveBeenCalledTimes(2);
+    expect(getTickets).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'InProgress', page: 1 }),
+    );
+  });
+    it('fetches once when search and status change together', async () => {
+    const { result } = renderHook(() => useTicketList());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(getTickets).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      result.current.updateFilters({
+        search: 'invoice',
+        status: 'InProgress',
+      });
+    });
+
+    expect(getTickets).toHaveBeenCalledTimes(2);
+    expect(getTickets).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        search: 'invoice',
+        status: 'InProgress',
+        page: 1,
+      }),
+    );
   });
 });

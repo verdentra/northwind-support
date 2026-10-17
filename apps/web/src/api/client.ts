@@ -6,6 +6,10 @@ import type { ProblemDetails } from '../types/api';
  */
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
+const accessTokenStorageKey = 'support-desk.access-token';
+
+export const unauthorizedEventName = 'support-desk:unauthorized';
+
 /** A failed HTTP call, carrying the problem document the API returned. */
 export class ApiError extends Error {
   readonly status: number;
@@ -15,8 +19,8 @@ export class ApiError extends Error {
   constructor(status: number, message: string, problem?: ProblemDetails) {
     super(message);
     this.name = 'ApiError';
-    this.status = status;
     this.problem = problem;
+    this.status = status;
   }
 
   /** Field name to messages, when the failure was a validation failure. */
@@ -25,18 +29,61 @@ export class ApiError extends Error {
   }
 }
 
+export function getAccessToken(): string | null {
+  return sessionStorage.getItem(accessTokenStorageKey);
+}
+
+export function setAccessToken(accessToken: string): void {
+  sessionStorage.setItem(accessTokenStorageKey, accessToken);
+}
+
+export function clearAccessToken(): void {
+  sessionStorage.removeItem(accessTokenStorageKey);
+}
+
+export interface RequestOptions extends RequestInit {
+  /**
+   * Login itself can return 401 for invalid credentials.
+   * That 401 should be shown on the login page instead of triggering
+   * the global logout redirect.
+   */
+  skipUnauthorizedHandling?: boolean;
+}
+
 /**
  * The single place that talks to the API. Returns parsed JSON, or throws an
- * {@link ApiError} that callers can show to the user.
+ * ApiError that callers can show to the user.
  */
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(
+  path: string,
+  init?: RequestOptions,
+): Promise<T> {
+  const {
+    skipUnauthorizedHandling = false,
+    ...fetchOptions
+  } = init ?? {};
+
+  const accessToken = getAccessToken();
+
   const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
+    ...fetchOptions,
     headers: {
       'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
+      ...(fetchOptions.headers ?? {}),
+      ...(accessToken
+        ? { Authorization: `Bearer ${accessToken}` }
+        : {}),
     },
   });
+
+  if (
+    response.status === 401 &&
+    !skipUnauthorizedHandling
+  ) {
+    clearAccessToken();
+
+    window.dispatchEvent(new Event(unauthorizedEventName));
+  }
 
   if (!response.ok) {
     const problem = await readProblem(response);
@@ -68,7 +115,9 @@ export function toErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-async function readProblem(response: Response): Promise<ProblemDetails | undefined> {
+async function readProblem(
+  response: Response,
+): Promise<ProblemDetails | undefined> {
   try {
     return (await response.json()) as ProblemDetails;
   } catch {
