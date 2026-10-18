@@ -17,17 +17,55 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    ICredentialHasher hasher,
+    ILogger<SupportDbSeeder> logger)
 {
-    /// <summary>Seeds the database, unless it already has tickets in it.</summary>
+    /// <summary>
+    /// Development login password for every seeded agent. A local fixture, obviously not a
+    /// real credential. Only its hash is stored.
+    /// </summary>
+    public const string DevelopmentPassword = "LocalDevOnly!123";
+
+    /// <summary>Seeds demo data once, then makes sure every agent has a (hashed) password.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
-            logger.LogInformation("Seed data already present; skipping.");
+            logger.LogInformation("Seed data already present; skipping demo data.");
+        }
+        else
+        {
+            await SeedDemoDataAsync(ct);
+        }
+
+        await SeedCredentialsAsync(ct);
+    }
+
+    private async Task SeedCredentialsAsync(CancellationToken ct)
+    {
+        var agents = await db.Set<Agent>().Where(a => a.PasswordHash == null).ToListAsync(ct);
+
+        if (agents.Count == 0)
+        {
             return;
         }
 
+        foreach (var agent in agents)
+        {
+            // A fresh hash per agent, so each gets its own salt.
+            agent.SetPasswordHash(hasher.Hash(DevelopmentPassword));
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("Seeded development credentials for {Count} agents.", agents.Count);
+    }
+
+    private async Task SeedDemoDataAsync(CancellationToken ct)
+    {
         var now = clock.UtcNow;
 
         var categories = SeedCategories();
@@ -170,31 +208,33 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
         foreach (var row in rows)
         {
             var createdAtUtc = now.AddMinutes(-row.CreatedMinutesAgo);
+            var category = categories[row.CategoryIndex - 1];
+            var assignedAgentId = row.AgentIndex is not null 
+                ? agents[row.AgentIndex.Value - 1].Id 
+                : (int?)null;
+            var dueAtUtc = createdAtUtc.AddMinutes(row.SlaWindowMinutes);
 
             var ticket = Ticket.Raise(
                 row.Reference,
                 row.Title,
                 row.Description,
                 customers[row.CustomerIndex - 1].Id,
-                categories[row.CategoryIndex - 1].Id,
+                category.Id,
                 row.Priority,
+                category.ForcesCriticalPriority,
+                dueAtUtc,
+                assignedAgentId,
                 createdAtUtc);
-
-            if (row.AgentIndex is not null)
-            {
-                ticket.AssignTo(agents[row.AgentIndex.Value - 1].Id, createdAtUtc);
-            }
 
             if (row.Status != TicketStatus.New)
             {
-                // Resolving or closing stamps the resolution time; open statuses clear it.
                 ticket.ChangeStatus(row.Status, createdAtUtc.AddMinutes(row.ResolvedAfterMinutes ?? 0));
             }
 
             var entry = db.Add(ticket);
             entry.Property(t => t.UpdatedAtUtc).CurrentValue =
                 createdAtUtc.AddMinutes(row.ResolvedAfterMinutes ?? row.CreatedMinutesAgo / 2);
-            entry.Property(t => t.DueAtUtc).CurrentValue = createdAtUtc.AddMinutes(row.SlaWindowMinutes);
+            entry.Property(t => t.DueAtUtc).CurrentValue = dueAtUtc;
         }
     }
 

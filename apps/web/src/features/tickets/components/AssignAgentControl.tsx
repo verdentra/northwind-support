@@ -15,7 +15,11 @@ export function AssignAgentControl({ ticket, agents, onUpdated }: AssignAgentCon
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string>();
 
+  const cannotBeReassigned = ticket.status === 'Resolved' || ticket.status === 'Closed';
+
   const assign = async (agentId: number | null) => {
+    if (cannotBeReassigned) return;
+
     setIsSaving(true);
     setError(undefined);
 
@@ -32,12 +36,18 @@ export function AssignAgentControl({ ticket, agents, onUpdated }: AssignAgentCon
     <div className="card">
       <h2>Assignment</h2>
 
+      {cannotBeReassigned && (
+        <p className="field__hint" style={{ marginBottom: '8px' }}>
+          {ticket.status} tickets cannot be reassigned.
+        </p>
+      )}
+
       <Field id="assign-agent" label="Assigned agent" error={error}>
         {(fieldProps) => (
           <select
             {...fieldProps}
             value={ticket.assignedAgent?.id ?? ''}
-            disabled={isSaving}
+            disabled={isSaving || cannotBeReassigned}
             onChange={(event) =>
               void assign(event.target.value === '' ? null : Number(event.target.value))
             }

@@ -13,7 +13,11 @@ public class TicketTests
     {
         var ticket = Ticket.Raise(
             "TCK-0041", "  Cannot log in  ", "  Happens for every user.  ", 1, 3,
-            TicketPriority.High, FixedClock.DefaultNow);
+            TicketPriority.High,
+            forcesCriticalPriority: false,
+            dueAtUtc: null,
+            assignedAgentId: null,
+            FixedClock.DefaultNow);
 
         Assert.Equal(TicketStatus.New, ticket.Status);
         Assert.Equal("Cannot log in", ticket.Title);
@@ -22,6 +26,7 @@ public class TicketTests
         Assert.Null(ticket.DueAtUtc);
         Assert.Equal(FixedClock.DefaultNow, ticket.CreatedAtUtc);
         Assert.Equal(FixedClock.DefaultNow, ticket.UpdatedAtUtc);
+        Assert.Equal(FixedClock.DefaultNow, ticket.SlaWindowStartUtc);
     }
 
     [Fact]
@@ -98,5 +103,17 @@ public class TicketTests
 
         Assert.Null(ticket.AssignedAgentId);
         Assert.Equal(Later, ticket.UpdatedAtUtc);
+    }
+    [Theory]
+    [InlineData(TicketStatus.Resolved)]
+    [InlineData(TicketStatus.Closed)]
+    public void AssignTo_WhenTicketIsResolvedOrClosed_ThrowsBusinessRuleViolationException(TicketStatus terminalStatus)
+    {
+        var ticket = new TicketBuilder().WithStatus(terminalStatus).AssignedTo(1).Build();
+
+        var exception = Assert.Throws<BusinessRuleViolationException>(() => ticket.AssignTo(2, Later));
+
+        Assert.Contains(terminalStatus.ToString(), exception.Message);
+        Assert.Contains("cannot be reassigned", exception.Message);
     }
 }
