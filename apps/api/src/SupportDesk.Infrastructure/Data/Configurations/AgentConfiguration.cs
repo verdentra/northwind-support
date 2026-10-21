@@ -21,6 +21,9 @@ public sealed class AgentConfiguration : IEntityTypeConfiguration<Agent>
 
         builder.HasIndex(a => a.Email).IsUnique().HasDatabaseName("UQ_Agents_Email");
 
+        builder.Property(a => a.PasswordHash)
+            .HasMaxLength(512);
+        
         builder.HasMany(a => a.Specializations)
             .WithOne()
             .HasForeignKey(s => s.AgentId)

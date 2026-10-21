@@ -1,5 +1,5 @@
 import type { ProblemDetails } from '../types/api';
-
+import { clearAuth, getToken } from './auth';
 /**
  * Where the API lives. In development this stays '/api' and the Vite dev server proxies it
  * to the backend; set VITE_API_BASE_URL to point a build somewhere else. See .env.example.
@@ -29,14 +29,36 @@ export class ApiError extends Error {
  * The single place that talks to the API. Returns parsed JSON, or throws an
  * {@link ApiError} that callers can show to the user.
  */
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+
+export async function request<T>(
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  const token = getToken();
+
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
   });
+
+  if (response.status === 401) {
+    clearAuth();
+
+    const returnTo = window.location.pathname +
+      window.location.search;
+
+    if (window.location.pathname !== '/login') {
+      window.location.assign(
+        `/login?returnTo=${encodeURIComponent(returnTo)}`
+      );
+    }
+
+    throw new ApiError(401, 'Your session has expired.');
+  }
 
   if (!response.ok) {
     const problem = await readProblem(response);
@@ -44,7 +66,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(
       response.status,
       problem?.detail ?? problem?.title ?? response.statusText,
-      problem,
+      problem
     );
   }
 

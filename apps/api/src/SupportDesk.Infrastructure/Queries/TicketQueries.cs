@@ -7,6 +7,8 @@ using SupportDesk.Domain.Aggregates.Categories;
 using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
 using SupportDesk.Infrastructure.Data;
+using Microsoft.Extensions.Options;
+using SupportDesk.Application.Configuration;
 
 namespace SupportDesk.Infrastructure.Queries;
 
@@ -14,20 +16,20 @@ namespace SupportDesk.Infrastructure.Queries;
 /// Ticket reads. Projected in the database and never tracked. Aggregates hold only each
 /// other's ids, so the customer, category and agent labels are joined in here, on the read side.
 /// </summary>
-public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQueries
+public sealed class TicketQueries(
+    SupportDbContext db,
+    IClock clock,
+    IOptions<SlaOptions> slaOptions) : ITicketQueries
 {
     /// <remarks>
-    /// Sorts and pages every ticket. The filter values bound into <paramref name="query"/>
-    /// (search, status, priority, category, customer, agent, unassigned-only) are not applied
-    /// yet: server-side filtering is still to be built.
+    /// Applies the requested filters in the database before counting, sorting and paging.
     /// </remarks>
     public async Task<PagedResult<TicketListItemDto>> GetPagedAsync(TicketQuery query, CancellationToken ct)
     {
-        var tickets = TicketsWithLabels();
-
-        var totalCount = await tickets.CountAsync(ct);
-
         var now = clock.UtcNow;
+        var tickets = ApplyFilters(TicketsWithLabels(), query, now);
+        
+        var totalCount = await tickets.CountAsync(ct);
 
         var items = await ApplySort(tickets, query)
             .Skip((query.Page - 1) * query.PageSize)
@@ -46,7 +48,17 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+                SlaStatus = x.Ticket.SlaStartedAtUtc.HasValue
+                    ? SlaEvaluator.Evaluate(
+                        x.Ticket.DueAtUtc,
+                        x.Ticket.ResolvedAtUtc,
+                        now,
+                        x.Ticket.SlaStartedAtUtc.Value,
+                        slaOptions.Value.AtRiskThresholdPercent)
+                    : SlaEvaluator.Evaluate(
+                        x.Ticket.DueAtUtc,
+                        x.Ticket.ResolvedAtUtc,
+                        now)
             })
             .ToListAsync(ct);
 
@@ -75,7 +87,18 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+
+                SlaStatus = x.Ticket.SlaStartedAtUtc.HasValue
+                    ? SlaEvaluator.Evaluate(
+                        x.Ticket.DueAtUtc,
+                        x.Ticket.ResolvedAtUtc,
+                        now,
+                        x.Ticket.SlaStartedAtUtc.Value,
+                        slaOptions.Value.AtRiskThresholdPercent)
+                    : SlaEvaluator.Evaluate(
+                        x.Ticket.DueAtUtc,
+                        x.Ticket.ResolvedAtUtc,
+                        now)
             })
             .FirstOrDefaultAsync(ct);
     }
@@ -102,7 +125,18 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
                 UpdatedAtUtc = x.Ticket.UpdatedAtUtc,
                 DueAtUtc = x.Ticket.DueAtUtc,
                 ResolvedAtUtc = x.Ticket.ResolvedAtUtc,
-                SlaStatus = SlaEvaluator.Evaluate(x.Ticket.DueAtUtc, x.Ticket.ResolvedAtUtc, now)
+
+                SlaStatus = x.Ticket.SlaStartedAtUtc.HasValue
+                    ? SlaEvaluator.Evaluate(
+                        x.Ticket.DueAtUtc,
+                        x.Ticket.ResolvedAtUtc,
+                        now,
+                        x.Ticket.SlaStartedAtUtc.Value,
+                        slaOptions.Value.AtRiskThresholdPercent)
+                    : SlaEvaluator.Evaluate(
+                        x.Ticket.DueAtUtc,
+                        x.Ticket.ResolvedAtUtc,
+                        now)
             })
             .ToListAsync(ct);
     }
@@ -117,7 +151,71 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
         from agent in db.Set<Agent>().Where(a => a.Id == ticket.AssignedAgentId).DefaultIfEmpty()
         select new TicketWithLabels { Ticket = ticket, Customer = customer, Category = category, Agent = agent };
 
-    private static IQueryable<TicketWithLabels> ApplySort(IQueryable<TicketWithLabels> source, TicketQuery query)
+        private static IQueryable<TicketWithLabels> ApplyFilters(
+            IQueryable<TicketWithLabels> source,
+            TicketQuery query,
+            DateTime nowUtc)
+        {
+            if (query.Status.HasValue)
+            {
+                source = source.Where(x => x.Ticket.Status == query.Status.Value);
+            }
+
+            if (query.Priority.HasValue)
+            {
+                source = source.Where(x => x.Ticket.Priority == query.Priority.Value);
+            }
+
+            
+            if (query.SlaStatus == SlaStatus.Breached)
+            {
+                source = source.Where(x =>
+                    x.Ticket.DueAtUtc != null &&
+                    (
+                        (x.Ticket.ResolvedAtUtc != null &&
+                        x.Ticket.ResolvedAtUtc > x.Ticket.DueAtUtc) ||
+                        (x.Ticket.ResolvedAtUtc == null &&
+                        x.Ticket.DueAtUtc < nowUtc)
+                    ));
+            }
+
+
+            if (query.CategoryId.HasValue)
+            {
+                source = source.Where(x => x.Ticket.CategoryId == query.CategoryId.Value);
+            }
+
+            if (query.CustomerId.HasValue)
+            {
+                source = source.Where(x => x.Ticket.CustomerId == query.CustomerId.Value);
+            }
+
+            if (query.AssignedAgentId.HasValue)
+            {
+                source = source.Where(x => x.Ticket.AssignedAgentId == query.AssignedAgentId.Value);
+            }
+
+            if (query.UnassignedOnly)
+            {
+                source = source.Where(x => x.Ticket.AssignedAgentId == null);
+            }
+
+            var search = query.Search?.Trim();
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                source = source.Where(x =>
+                    x.Ticket.Title.Contains(search) ||
+                    x.Ticket.Reference.Contains(search) ||
+                    x.Customer.Name.Contains(search));
+            }
+
+            return source;
+        }
+    
+    private static IQueryable<TicketWithLabels> ApplySort(
+        IQueryable<TicketWithLabels> source, 
+        TicketQuery query)
     {
         var descending = !string.Equals(query.SortDirection, "asc", StringComparison.OrdinalIgnoreCase);
 
@@ -143,6 +241,30 @@ public sealed class TicketQueries(SupportDbContext db, IClock clock) : ITicketQu
         // Keeps paging stable when the sort column has duplicates.
         return sorted.ThenByDescending(x => x.Ticket.Id);
     }
+
+
+    /// <summary>
+    /// Calculates the current SLA status using the configured AtRisk threshold.
+    /// Existing tickets without an SLA start timestamp use their creation time.
+    /// </summary>
+    private SlaStatus EvaluateSla(Ticket ticket, DateTime nowUtc)
+    {
+        if (ticket.SlaStartedAtUtc is null)
+        {
+            return SlaEvaluator.Evaluate(
+                ticket.DueAtUtc,
+                ticket.ResolvedAtUtc,
+                nowUtc);
+        }
+
+        return SlaEvaluator.Evaluate(
+            ticket.DueAtUtc,
+            ticket.ResolvedAtUtc,
+            nowUtc,
+            ticket.SlaStartedAtUtc.Value,
+            slaOptions.Value.AtRiskThresholdPercent);
+    }
+
 
     private sealed class TicketWithLabels
     {

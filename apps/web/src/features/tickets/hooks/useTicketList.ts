@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
 import { ticketsApi } from '../../../api/tickets';
 import type { PagedResult, TicketFilters, TicketListItem } from '../../../types/api';
@@ -17,6 +17,7 @@ export const emptyFilters: TicketFilters = {
   pageSize: 20,
   sortBy: 'createdAtUtc',
   sortDirection: 'desc',
+  slaStatus: undefined,
 };
 
 interface State {
@@ -25,34 +26,119 @@ interface State {
   error?: string;
 }
 
-/** Owns the ticket list's filters and the data they produce. */
 export function useTicketList() {
   const [filters, setFilters] = useState<TicketFilters>(emptyFilters);
   const [state, setState] = useState<State>({ isLoading: true });
 
-  const load = async () => {
-    setState((current) => ({ ...current, isLoading: true, error: undefined }));
-
-    try {
-      const data = await ticketsApi.getTickets(filters);
-      setState({ isLoading: false, data, error: undefined });
-    } catch (error) {
-      const message = error instanceof ApiError ? error.message : 'Unable to load tickets.';
-      setState((current) => ({ ...current, isLoading: false, error: message }));
-    }
-  };
+  const previousSearch = useRef(filters.search);
+  const requestId = useRef(0);
+  const searchDebouncePending = useRef(false);
+  const searchDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const handle = window.setTimeout(load, DEBOUNCE_MS);
+  const searchChanged = previousSearch.current !== filters.search;
+  previousSearch.current = filters.search;
 
-    return () => window.clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- filters object identity changes every render
-  }, [filters.search, filters.page, filters.pageSize]);
+  if (searchChanged) {
+    searchDebouncePending.current = true;
+  }
+
+    const currentRequestId = ++requestId.current;
+
+    const load = async () => {
+      setState((current) => ({
+        ...current,
+        isLoading: true,
+        error: undefined,
+      }));
+
+      try {
+        const data = await ticketsApi.getTickets(filters);
+
+        // Ignore responses from older requests.
+        if (currentRequestId === requestId.current) {
+          setState({ isLoading: false, data, error: undefined });
+        }
+      } catch (error) {
+        if (currentRequestId === requestId.current) {
+          const message =
+            error instanceof ApiError
+              ? error.message
+              : 'Unable to load tickets.';
+
+          setState((current) => ({
+            ...current,
+            isLoading: false,
+            error: message,
+          }));
+        }
+      }
+    };
+
+    // Search is debounced; all other filter changes run immediately.
+    const handle = window.setTimeout(
+    () => {
+      searchDebouncePending.current = false;
+      searchDebounceTimer.current = null;
+      void load();
+    },
+    searchDebouncePending.current ? DEBOUNCE_MS : 0,
+  );
+
+  searchDebounceTimer.current = handle;
+
+  return () => {
+    window.clearTimeout(handle);
+    searchDebounceTimer.current = null;
+    requestId.current++;
+  };
+  }, [filters]);
 
   const updateFilters = (patch: Partial<TicketFilters>) =>
-    setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));
+    setFilters((current) => ({
+      ...current,
+      ...patch,
+      page: patch.page ?? 1,
+    }));
 
   const resetFilters = () => setFilters(emptyFilters);
 
-  return { filters, updateFilters, resetFilters, reload: load, ...state };
+  const reload = async () => {
+    const currentRequestId = ++requestId.current;
+
+    setState((current) => ({
+      ...current,
+      isLoading: true,
+      error: undefined,
+    }));
+
+    try {
+      const data = await ticketsApi.getTickets(filters);
+
+      if (currentRequestId === requestId.current) {
+        setState({ isLoading: false, data, error: undefined });
+      }
+    } catch (error) {
+      if (currentRequestId === requestId.current) {
+        const message =
+          error instanceof ApiError
+            ? error.message
+            : 'Unable to load tickets.';
+
+        setState((current) => ({
+          ...current,
+          isLoading: false,
+          error: message,
+        }));
+      }
+    }
+  };
+
+  return {
+    filters,
+    updateFilters,
+    resetFilters,
+    reload,
+    ...state,
+  };
 }

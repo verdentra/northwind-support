@@ -7,6 +7,7 @@ const labels: Partial<Record<SlaStatus, { text: string; tone: BadgeTone }>> = {
   Breached: { text: 'Breached', tone: 'danger' },
   WithinSla: { text: 'Within SLA', tone: 'info' },
   NotApplicable: { text: 'No SLA', tone: 'neutral' },
+  AtRisk: { text: 'At Risk', tone: 'warning' },
 };
 
 interface SlaCellProps {

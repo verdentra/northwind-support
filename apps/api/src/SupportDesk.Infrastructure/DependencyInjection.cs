@@ -43,6 +43,8 @@ public static class DependencyInjection
 
         services.AddScoped<SupportDbSeeder>();
 
+        services.AddScoped<ITicketEscalationQueries, TicketEscalationQueries>();
+
         return services;
     }
 }

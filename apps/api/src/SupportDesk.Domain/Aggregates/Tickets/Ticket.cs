@@ -43,6 +43,12 @@ public sealed class Ticket : AggregateRoot
     /// <summary>When the team has committed to responding by. Null when no SLA applies.</summary>
     public DateTime? DueAtUtc { get; private set; }
 
+    /// <summary>
+    /// When the current SLA window began.
+    /// Updated when the SLA deadline is recalculated.
+    /// </summary>
+    public DateTime? SlaStartedAtUtc { get; private set; }
+    
     public DateTime? ResolvedAtUtc { get; private set; }
 
     /// <summary>True while the ticket still needs work from an agent.</summary>
@@ -111,4 +117,70 @@ public sealed class Ticket : AggregateRoot
         AssignedAgentId = agentId;
         UpdatedAtUtc = nowUtc;
     }
+
+    /// <summary>
+    /// Sets the SLA deadline for the ticket.
+    /// The caller calculates the deadline using the configured SLA rules.
+    /// </summary>
+    public void SetDueDate(DateTime dueAtUtc, DateTime nowUtc)
+    {
+        if (dueAtUtc <= nowUtc)
+        {
+            throw new BusinessRuleViolationException(
+                "The SLA deadline must be later than the current time.");
+        }
+
+        DueAtUtc = dueAtUtc;
+        SlaStartedAtUtc = nowUtc;
+        UpdatedAtUtc = nowUtc;
+    }
+
+    
+    /// <summary>
+    /// Checks whether the ticket can be escalated.
+    /// </summary>
+    /// <exception cref="BusinessRuleViolationException">
+    /// The ticket is Critical, Resolved, or Closed.
+    /// </exception>
+    public void EnsureCanEscalate()
+    {
+        if (Status == TicketStatus.Resolved)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is resolved and cannot be escalated.");
+        }
+
+        if (Status == TicketStatus.Closed)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is closed and cannot be escalated.");
+        }
+
+        if (Priority == TicketPriority.Critical)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is already Critical and cannot be escalated.");
+        }
+    }
+
+    /// <summary>
+    /// Raises the ticket priority by exactly one level.
+    /// Assignment and SLA recalculation are handled by the application layer.
+    /// </summary>
+    public void EscalatePriority(DateTime nowUtc)
+    {
+        EnsureCanEscalate();
+
+        Priority = Priority switch
+        {
+            TicketPriority.Low => TicketPriority.Medium,
+            TicketPriority.Medium => TicketPriority.High,
+            TicketPriority.High => TicketPriority.Critical,
+            _ => throw new BusinessRuleViolationException(
+                $"Ticket {Reference} cannot be escalated.")
+        };
+
+        UpdatedAtUtc = nowUtc;
+    }
+
 }

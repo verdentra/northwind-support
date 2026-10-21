@@ -5,6 +5,8 @@ using SupportDesk.Domain.Aggregates.Agents;
 using SupportDesk.Domain.Aggregates.Categories;
 using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Hosting;
 
 namespace SupportDesk.Infrastructure.Data;
 
@@ -17,7 +19,12 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
+
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    ILogger<SupportDbSeeder> logger,
+    IHostEnvironment environment)
 {
     /// <summary>Seeds the database, unless it already has tickets in it.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
@@ -28,6 +35,7 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
             return;
         }
 
+        
         var now = clock.UtcNow;
 
         var categories = SeedCategories();
@@ -47,7 +55,53 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
 
         logger.LogInformation(
             "Seeded {Categories} categories, {Customers} customers, {Agents} agents and {Tickets} tickets.",
-            categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
+            categories.Count,
+            customers.Count,
+            agents.Count,
+            await db.Set<Ticket>().CountAsync(ct));
+    }
+
+    public async Task SeedDevelopmentPasswordsAsync(
+        CancellationToken ct = default)
+    {
+        if (!environment.IsDevelopment())
+        {
+            return;
+        }
+
+        var agents = await db.Set<Agent>().ToListAsync(ct);
+
+        if (agents.Count == 0)
+        {
+            return;
+        }
+
+        var hasher = new PasswordHasher<Agent>();
+        var changed = false;
+
+        foreach (var agent in agents)
+        {
+            if (!string.IsNullOrWhiteSpace(agent.PasswordHash))
+            {
+                continue;
+            }
+
+            // Demo-only credentials. Never use these in production.
+            const string developmentPassword = "NorthwindDemo2026!";
+
+            agent.SetPasswordHash(
+                hasher.HashPassword(agent, developmentPassword));
+
+            changed = true;
+        }
+
+        if (changed)
+        {
+            await db.SaveChangesAsync(ct);
+
+            logger.LogInformation(
+                "Initialized development password hashes for existing agents.");
+        }
     }
 
     private static List<Category> SeedCategories() =>

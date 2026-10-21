@@ -33,6 +33,23 @@ export function CreateTicketPage() {
           <p>
             Raised <strong>{created.reference}</strong> for {created.customer.name}.
           </p>
+          
+          {created.triage && (
+            <div>
+              <h2>Automatic triage</h2>
+              <p>{created.triage.priorityExplanation}</p>
+              <p>{created.triage.assignmentExplanation}</p>
+              <p>{created.triage.slaExplanation}</p>
+            </div>
+          )}
+
+          <p>
+            Assigned to: {created.assignedAgent?.fullName ?? 'Unassigned'}
+          </p>
+          <p>
+            SLA status: {created.slaStatus}
+          </p>
+
           <div className="button-row">
             <button
               type="button"

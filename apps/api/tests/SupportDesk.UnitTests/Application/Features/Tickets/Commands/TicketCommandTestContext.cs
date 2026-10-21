@@ -10,6 +10,10 @@ using SupportDesk.Domain.Aggregates.Customers;
 using SupportDesk.Domain.Aggregates.Tickets;
 using SupportDesk.Domain.Repositories;
 using SupportDesk.UnitTests.TestDoubles;
+using Microsoft.Extensions.Options;
+using SupportDesk.Application.Configuration;
+using SupportDesk.Application.Services;
+using SupportDesk.Domain.Aggregates.Categories;
 
 namespace SupportDesk.UnitTests.Application.Features.Tickets.Commands;
 
@@ -26,6 +30,33 @@ internal sealed class TicketCommandTestContext
 
         Categories.Setup(c => c.ExistsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+
+        var customer = new Customer(
+            "Contoso Ltd",
+            "support@contoso.example",
+            null,
+            CustomerTier.Premium,
+            Clock.UtcNow);
+
+        var category = new Category(
+            "General",
+            requiresSpecialist: false,
+            forcesCriticalPriority: false);
+
+        Customers.Setup(c => c.GetByIdAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(customer);
+
+        Categories.Setup(c => c.GetByIdAsync(
+                It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(category);
+
+        // No eligible agent: creation must still succeed unassigned.
+        AgentQueries.Setup(a => a.FindBestAvailableAsync(
+                It.IsAny<int>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SupportDesk.Application.Contracts.Agents.AgentSelectionDto?)null);
 
         Tickets.Setup(t => t.NextReferenceAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("TCK-0041");
@@ -44,10 +75,33 @@ internal sealed class TicketCommandTestContext
                 Category = new CategoryDto(1, "General", false)
             });
 
+        var slaOptions = Options.Create(new SlaOptions
+        {
+            BaseWindowHours = new Dictionary<TicketPriority, double>
+            {
+                [TicketPriority.Low] = 72,
+                [TicketPriority.Medium] = 24,
+                [TicketPriority.High] = 8,
+                [TicketPriority.Critical] = 4
+            },
+            PremiumCustomerMultiplier = 0.5,
+            MinimumWindowHours = 1,
+            AtRiskThresholdPercent = 25
+        });
+
+        var slaCalculator = new SlaCalculator(slaOptions);
+        
         var getTicket = new GetTicketQueryHandler(TicketQueries.Object);
 
         RaiseTicket = new RaiseTicketCommandHandler(
-            Tickets.Object, Customers.Object, Categories.Object, UnitOfWork.Object, Clock, getTicket,
+            Tickets.Object,
+            Customers.Object,
+            Categories.Object,
+            AgentQueries.Object,
+            slaCalculator,
+            UnitOfWork.Object,
+            Clock,
+            getTicket,
             NullLogger<RaiseTicketCommandHandler>.Instance);
 
         ChangeTicketStatus = new ChangeTicketStatusCommandHandler(Tickets.Object, UnitOfWork.Object, Clock, getTicket);
@@ -65,6 +119,8 @@ internal sealed class TicketCommandTestContext
 
     public Mock<IAgentRepository> Agents { get; } = new();
 
+    public Mock<IAgentQueries> AgentQueries { get; } = new();
+    
     public Mock<IUnitOfWork> UnitOfWork { get; } = new();
 
     public Mock<ITicketQueries> TicketQueries { get; } = new();

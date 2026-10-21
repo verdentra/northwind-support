@@ -1,11 +1,13 @@
-import { Link, useParams } from 'react-router-dom';
-import { ErrorMessage } from '../../components/ErrorMessage';
+import { useState } from 'react';
+import { Link, useParams } from 'react-router-dom';import { ErrorMessage } from '../../components/ErrorMessage';
 import { Spinner } from '../../components/Spinner';
 import { useReferenceData } from '../../hooks/useReferenceData';
 import { AssignAgentControl } from './components/AssignAgentControl';
 import { StatusActions } from './components/StatusActions';
 import { TicketSummary } from './components/TicketSummary';
 import { useTicket } from './hooks/useTicket';
+import { EscalateTicketForm } from './components/EscalateTicketForm';
+import { EscalationHistory } from './components/EscalationHistory';
 
 export function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -13,6 +15,8 @@ export function TicketDetailPage() {
 
   const { data: ticket, isLoading, error, reload, setData } = useTicket(ticketId);
   const reference = useReferenceData();
+
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   if (Number.isNaN(ticketId)) {
     return <ErrorMessage message="That is not a valid ticket reference." />;
@@ -51,6 +55,18 @@ export function TicketDetailPage() {
           </div>
 
           <StatusActions ticket={ticket} onUpdated={setData} />
+          
+          <EscalateTicketForm
+            ticket={ticket}
+            onUpdated={setData}
+            onEscalated={() => setHistoryRefreshKey((value) => value + 1)}
+          />
+
+          <EscalationHistory
+            ticketId={ticket.id}
+            refreshKey={historyRefreshKey}
+          />
+
         </div>
 
         <aside className="detail-layout__side">
